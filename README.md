@@ -13,12 +13,19 @@ Download the [VM](https://files.sri.inf.ethz.ch/website/teaching/riai2018/materi
 
 ``` bash
 cd ~/ELINA && make && sudo make install
-cd ~/analyser && bash ./setup_gurobi.sh
+cd ~/analyser && cat ./setup_gurobi.sh >> ~/.bashrc && source ~/.bashrc
 ```
 
 ## Run the analyse
 
 ``` bash
 cd ~/analyser
-./analyser.py --netname [netname] --image [image] [epsilon] 
+./analyser.py [netname] [image] [epsilon] 
+```
+
+**example**
+
+```
+cd ~/analyser
+./analyser.py ../mnist_nets/mnist_relu_6_20.txt ../mnist_images/img10.txt 0.2
 ```
