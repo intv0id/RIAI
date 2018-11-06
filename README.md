@@ -11,9 +11,19 @@ Reliable Interpretable Artificial Intelligence Project (FALL 2018 @ ETHZ)
 
 Download the [VM](https://files.sri.inf.ethz.ch/website/teaching/riai2018/materials/project/riai.ova)
 
+Clone the repo
+
+```
+cd ~
+mv analyser analyser.old
+git clone https://github.com/intv0id/RIAI.git analyser
+```
+
+Install the packages
+
 ``` bash
 cd ~/ELINA && make && sudo make install
-cd ~/analyser && cat ./setup_gurobi.sh >> ~/.bashrc && source ~/.bashrc
+cd ~/analyser.old && cat ./setup_gurobi.sh >> ~/.bashrc && source ~/.bashrc
 ```
 
 ## Run the analyse
