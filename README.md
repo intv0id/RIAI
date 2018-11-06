@@ -25,7 +25,7 @@ cd ~/analyser
 
 **example**
 
-```
+``` bash
 cd ~/analyser
 ./analyser.py ../mnist_nets/mnist_relu_6_20.txt ../mnist_images/img10.txt 0.2
 ```
