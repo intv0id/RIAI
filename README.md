@@ -19,5 +19,6 @@ cd ~/analyser && bash ./setup_gurobi.sh
 ## Run the analyse
 
 ``` bash
-cd ~/analyser/analyser.py --[netname] --[image] [epsilon] 
+cd ~/analyser
+./analyser.py --[netname] --[image] [epsilon] 
 ```
