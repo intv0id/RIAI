@@ -226,6 +226,8 @@ def gurobi_bounds(nn, lower_bounds, upper_bounds):
         ris.append(ri)
 
         if (inf >= 0):
+            m.addConstr(hi >= inf)
+            m.addConstr(hi <= sup)
             m.addConstr(ri == hi)
         elif (sup <= 0):
             m.addConstr(ri == 0)
@@ -250,7 +252,7 @@ def gurobi_bounds(nn, lower_bounds, upper_bounds):
             ri = m.addVar(vtype=GRB.CONTINUOUS, name='r' + str(i) + str(j))
             new_ris.append(ri)
 
-            hi_val = LinExpr(nn.weights[i][j, :], ris)
+            hi_val = LinExpr(nn.weights[i][j, :], ris) + nn.biases[i][j]
 
             m.addConstr(hi_val == hi)
 
@@ -304,6 +306,14 @@ if __name__ == '__main__':
     LB_N0, UB_N0 = get_perturbed_image(x0_low, epsilon)
 
     lower_bounds, upper_bounds = get_bounds(nn, LB_N0, UB_N0)
+
+    lower_bounds = [-np.ones(2), -np.ones(2), np.ones(2)]
+    upper_bounds = [np.ones(2), np.ones(2), np.ones(2)]
+    nn = layers()
+    nn.weights = [np.ones((2, 2)) * 0.5, np.ones((2, 2))
+                  * 0.5, np.ones((2, 2)) * 0.5]
+    nn.biases = [np.zeros(2), np.zeros(2), np.zeros(2)]
+
     output_lower_bounds, output_upper_bounds = gurobi_bounds(
         nn, lower_bounds, upper_bounds)
 
