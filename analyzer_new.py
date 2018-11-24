@@ -184,10 +184,6 @@ def get_bounds(nn, LB_N0, UB_N0):
             elina_abstract0_remove_dimensions(man, True, element, dimrem)
             elina_dimchange_free(dimrem)
 
-            # handle ReLU layer
-            if(nn.layertypes[layerno] == 'ReLU'):
-                element = relu_box_layerwise(
-                    man, True, element, 0, num_out_pixels)
             nn.ffn_counter += 1
 
             # get bounds for each neuron
@@ -202,6 +198,7 @@ def get_bounds(nn, LB_N0, UB_N0):
 
             lower_bounds.append(layer_lower_bounds)
             upper_bounds.append(layer_upper_bounds)
+
             elina_interval_array_free(bounds, num_out_pixels)
         else:
             print(' net type not supported')
@@ -214,9 +211,7 @@ def get_bounds(nn, LB_N0, UB_N0):
 
 def gurobi_bounds(nn, lower_bounds, upper_bounds):
     m = Model(name='NN')
-    m.setParam('OutputFlag', True)
-
-    numlayer = nn.numlayer
+    m.setParam('OutputFlag', False)
 
     his = []
     ris = []
@@ -224,7 +219,7 @@ def gurobi_bounds(nn, lower_bounds, upper_bounds):
         inf = lower_bounds[0][i]
         sup = upper_bounds[0][i]
 
-        hi = m.addVar(vtype=GRB.CONTINUOUS, lb=inf, ub=sup, name='h0' + str(i))
+        hi = m.addVar(vtype=GRB.CONTINUOUS, name='h0' + str(i))
         his.append(hi)
 
         ri = m.addVar(vtype=GRB.CONTINUOUS, name='r0' + str(i))
@@ -249,16 +244,13 @@ def gurobi_bounds(nn, lower_bounds, upper_bounds):
             inf = lower_bounds[i][j]
             sup = upper_bounds[i][j]
 
-            hi = m.addVar(vtype=GRB.CONTINUOUS, lb=inf,
-                          ub=sup, name='h' + str(i) + str(j))
+            hi = m.addVar(vtype=GRB.CONTINUOUS, name='h' + str(i) + str(j))
             new_his.append(hi)
 
             ri = m.addVar(vtype=GRB.CONTINUOUS, name='r' + str(i) + str(j))
             new_ris.append(ri)
 
-            hi_val = 0
-            for k in range(len(ris)):
-                hi_val += ris[k] * nn.weights[i][j, k]
+            hi_val = LinExpr(nn.weights[i][j, :], ris)
 
             m.addConstr(hi_val == hi)
 
@@ -309,8 +301,10 @@ if __name__ == '__main__':
 
     nn = parse_net(netstring)
     x0_low, x0_high = parse_spec(specstring)
-    LB_N0, UB_N0 = get_perturbed_image(x0_low, 0)
+    LB_N0, UB_N0 = get_perturbed_image(x0_low, epsilon)
 
     lower_bounds, upper_bounds = get_bounds(nn, LB_N0, UB_N0)
     output_lower_bounds, output_upper_bounds = gurobi_bounds(
         nn, lower_bounds, upper_bounds)
+
+    print(output_lower_bounds, output_upper_bounds)
