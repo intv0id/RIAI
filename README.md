@@ -15,27 +15,27 @@ Clone the repo
 
 ```
 cd ~
-mv analyser analyser.old
-git clone https://github.com/intv0id/RIAI.git analyser
+mv analyzer analyzer.old
+git clone https://github.com/intv0id/RIAI.git analyzer
 ```
 
 Install the packages
 
 ``` bash
 cd ~/ELINA && make && sudo make install
-cd ~/analyser.old && cat ./setup_gurobi.sh >> ~/.bashrc && source ~/.bashrc
+cd ~/analyzer.old && cat ./setup_gurobi.sh >> ~/.bashrc && source ~/.bashrc
 ```
 
 ## Run the analyse
 
 ``` bash
-cd ~/analyser
-./analyser.py [netname] [image] [epsilon] 
+cd ~/analyzer
+./analyzer.py [netname] [image] [epsilon]
 ```
 
 **example**
 
 ``` bash
-cd ~/analyser
-./analyser.py ../mnist_nets/mnist_relu_6_20.txt ../mnist_images/img10.txt 0.2
+cd ~/analyzer
+./analyzer.py ../mnist_nets/mnist_relu_6_20.txt ../mnist_images/img10.txt 0.2
 ```
