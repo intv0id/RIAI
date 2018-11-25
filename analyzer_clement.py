@@ -224,7 +224,7 @@ def gurobi_bounds(nn, lower_bounds, upper_bounds):
             hi = (
                 m.addVar(vtype=GRB.CONTINUOUS, name='h' + str(i) + str(j))
                 if i == 0 else 
-                LinExpr(nn.weights[i][j, :], old_ris) + nn.biases[i][j]
+                quicksum([LinExpr(nn.weights[i][j, :], old_ris), nn.biases[i][j]])
             )
             
             ri = m.addVar(vtype=GRB.CONTINUOUS, name='r' + str(i) + str(j))
