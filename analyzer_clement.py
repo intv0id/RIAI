@@ -2,6 +2,7 @@
 # coding: utf-8
 
 import sys
+from sys import argv
 sys.path.insert(0, '../ELINA/python_interface/')
 
 
@@ -213,49 +214,21 @@ def gurobi_bounds(nn, lower_bounds, upper_bounds):
     m = Model(name='NN')
     m.setParam('OutputFlag', False)
 
-    his = []
-    ris = []
-    for i in range(lower_bounds[0].size):
-        inf = lower_bounds[0][i]
-        sup = upper_bounds[0][i]
-
-        hi = m.addVar(vtype=GRB.CONTINUOUS, name='h0' + str(i))
-        his.append(hi)
-
-        ri = m.addVar(vtype=GRB.CONTINUOUS, name='r0' + str(i))
-        ris.append(ri)
-
-        if (inf >= 0):
-            m.addConstr(hi >= inf)
-            m.addConstr(hi <= sup)
-            m.addConstr(ri == hi)
-        elif (sup <= 0):
-            m.addConstr(ri == 0)
-        else:
-            k = sup / (sup - inf)
-            t = -sup * inf / (sup - inf)
-
-            m.addConstr(ri >= 0)
-            m.addConstr(ri >= hi)
-            m.addConstr(ri <= k * hi + t)
-
-    for i in range(1, len(lower_bounds)):
-        new_his = []
-        new_ris = []
+    ris, his = [], []
+    for i in range(0, len(lower_bounds)):
+        old_ris, ris, his = ris, [], []
         for j in range(lower_bounds[i].size):
             inf = lower_bounds[i][j]
             sup = upper_bounds[i][j]
 
-            hi = m.addVar(vtype=GRB.CONTINUOUS, name='h' + str(i) + str(j))
-            new_his.append(hi)
-
+            hi = (
+                m.addVar(vtype=GRB.CONTINUOUS, name='h' + str(i) + str(j))
+                if i == 0 else 
+                LinExpr(nn.weights[i][j, :], old_ris) + nn.biases[i][j]
+            )
+            
             ri = m.addVar(vtype=GRB.CONTINUOUS, name='r' + str(i) + str(j))
-            new_ris.append(ri)
-
-            hi_val = LinExpr(nn.weights[i][j, :], ris) + nn.biases[i][j]
-
-            m.addConstr(hi_val == hi)
-
+            
             if (inf >= 0):
                 m.addConstr(ri == hi)
             elif (sup <= 0):
@@ -268,12 +241,11 @@ def gurobi_bounds(nn, lower_bounds, upper_bounds):
                 m.addConstr(ri >= hi)
                 m.addConstr(ri <= k * hi + t)
 
-        his = new_his
-        ris = new_ris
+            his.append(hi)
+            ris.append(ri)
 
-    output_lower_bounds = []
-    output_upper_bounds = []
-    for i in range(len(his)):
+    output_lower_bounds, output_upper_bounds = [], []
+    for i in range(len(ris)):
         m.setObjective(his[i], GRB.MINIMIZE)
         m.optimize()
         output_lower_bounds.append(m.objVal)
@@ -286,7 +258,6 @@ def gurobi_bounds(nn, lower_bounds, upper_bounds):
 
 
 if __name__ == '__main__':
-    from sys import argv
     if len(argv) < 3 or len(argv) > 4:
         print('usage: python3.6 ' + argv[0] + ' net.txt spec.txt [timeout]')
         exit(1)
@@ -306,13 +277,6 @@ if __name__ == '__main__':
     LB_N0, UB_N0 = get_perturbed_image(x0_low, epsilon)
 
     lower_bounds, upper_bounds = get_bounds(nn, LB_N0, UB_N0)
-
-    lower_bounds = [-np.ones(2), -np.ones(2), np.ones(2)]
-    upper_bounds = [np.ones(2), np.ones(2), np.ones(2)]
-    nn = layers()
-    nn.weights = [np.ones((2, 2)) * 0.5, np.ones((2, 2))
-                  * 0.5, np.ones((2, 2)) * 0.5]
-    nn.biases = [np.zeros(2), np.zeros(2), np.zeros(2)]
 
     output_lower_bounds, output_upper_bounds = gurobi_bounds(
         nn, lower_bounds, upper_bounds)
