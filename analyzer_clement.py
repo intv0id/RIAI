@@ -260,11 +260,12 @@ def gurobi_bounds(nn, lower_bounds, upper_bounds):
     )
 
     for i in range(len(his[-1])):
+        m.reset()
         m.setObjective(his[-1][i], GRB.MINIMIZE)
         m.write("model_c_min.lp")
         m.optimize()
         try:
-            output_lower_bounds.append(m.objVal)
+            output_lower_bounds[i] = m.objVal
         except:
             print(f"Can't find lower bound for neuron {i}")
 
@@ -272,7 +273,7 @@ def gurobi_bounds(nn, lower_bounds, upper_bounds):
         m.write("model_c_max.lp")
         m.optimize()
         try:
-            output_upper_bounds.append(m.objVal)
+            output_upper_bounds[i] = m.objVal
         except:
             print(f"Can't find upper bound for neuron {i}")
 
