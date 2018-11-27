@@ -214,45 +214,67 @@ def gurobi_bounds(nn, lower_bounds, upper_bounds):
     m = Model(name='NN')
     m.setParam('OutputFlag', False)
 
-    ris, his = [], []
-    for i in range(0, len(lower_bounds)):
-        old_ris, ris, his = ris, [], []
+    # Set variables
+
+    his = [[(m.addVar(lb=lower_bounds[i][j],ub=upper_bounds[i][j],vtype=GRB.CONTINUOUS, name='h' + str(i) + str(j))
+            if i == 0 else 
+            m.addVar(vtype=GRB.CONTINUOUS, name='h' + str(i) + str(j)))
+        for j in range(lower_bounds[i].size)] 
+        for i in range(len(lower_bounds))]
+
+
+    ris = [[m.addVar(vtype=GRB.CONTINUOUS, name='r' + str(i) + str(j)) 
+        for j in range(lower_bounds[i].size)] 
+        for i in range(len(lower_bounds) -1)]
+
+    m.update()
+
+    # Weights & biases operation
+
+    for i in range(1, len(lower_bounds)):
         for j in range(lower_bounds[i].size):
-            inf = lower_bounds[i][j]
-            sup = upper_bounds[i][j]
+            m.addConstr(his[i][j] == LinExpr(nn.weights[i][j, :], ris[i-1]) + nn.biases[i][j])
 
-            hi = (
-                m.addVar(vtype=GRB.CONTINUOUS, name='h' + str(i) + str(j))
-                if i == 0 else 
-                quicksum([LinExpr(nn.weights[i][j, :], old_ris), nn.biases[i][j]])
-            )
-            
-            ri = m.addVar(vtype=GRB.CONTINUOUS, name='r' + str(i) + str(j))
-            
+    m.update()
+
+    for i in range(0, len(lower_bounds)-1):
+        for j in range(lower_bounds[i].size):
+            inf, sup = lower_bounds[i][j], upper_bounds[i][j]
+
             if (inf >= 0):
-                m.addConstr(ri == hi)
+                m.addConstr(ris[i][j] == his[i][j])
             elif (sup <= 0):
-                m.addConstr(ri == 0)
+                m.addConstr(ris[i][j] == 0)
             else:
-                k = sup / (sup - inf)
-                t = -sup * inf / (sup - inf)
+                k, t = sup / (sup - inf), -sup * inf / (sup - inf)
 
-                m.addConstr(ri >= 0)
-                m.addConstr(ri >= hi)
-                m.addConstr(ri <= k * hi + t)
+                m.addConstr(ris[i][j] >= 0)
+                m.addConstr(ris[i][j] >= his[i][j])
+                m.addConstr(ris[i][j] <= k * his[i][j] + t)
 
-            his.append(hi)
-            ris.append(ri)
+    m.update()
 
-    output_lower_bounds, output_upper_bounds = [], []
-    for i in range(len(ris)):
-        m.setObjective(his[i], GRB.MINIMIZE)
+    output_lower_bounds, output_upper_bounds = (
+        [None for _ in enumerate(his[-1])], 
+        [None for _ in enumerate(his[-1])]
+    )
+
+    for i in range(len(his[-1])):
+        m.setObjective(his[-1][i], GRB.MINIMIZE)
+        m.write("model_c_min.lp")
         m.optimize()
-        output_lower_bounds.append(m.objVal)
+        try:
+            output_lower_bounds.append(m.objVal)
+        except:
+            print(f"Can't find lower bound for neuron {i}")
 
-        m.setObjective(his[i], GRB.MAXIMIZE)
+        m.setObjective(his[-1][i], GRB.MAXIMIZE)
+        m.write("model_c_max.lp")
         m.optimize()
-        output_upper_bounds.append(m.objVal)
+        try:
+            output_upper_bounds.append(m.objVal)
+        except:
+            print(f"Can't find upper bound for neuron {i}")
 
     return output_lower_bounds, output_upper_bounds
 
