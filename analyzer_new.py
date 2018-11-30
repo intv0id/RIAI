@@ -2,6 +2,7 @@
 # coding: utf-8
 
 import sys
+from sys import argv
 sys.path.insert(0, '../ELINA/python_interface/')
 
 
@@ -184,8 +185,6 @@ def get_bounds(nn, LB_N0, UB_N0):
             elina_abstract0_remove_dimensions(man, True, element, dimrem)
             elina_dimchange_free(dimrem)
 
-            nn.ffn_counter += 1
-
             # get bounds for each neuron
             bounds = elina_abstract0_to_box(man, element)
 
@@ -200,6 +199,12 @@ def get_bounds(nn, LB_N0, UB_N0):
             upper_bounds.append(layer_upper_bounds)
 
             elina_interval_array_free(bounds, num_out_pixels)
+
+            # handle ReLU layer
+            if(nn.layertypes[layerno] == 'ReLU'):
+                element = relu_box_layerwise(
+                    man, True, element, 0, num_out_pixels)
+            nn.ffn_counter += 1
         else:
             print(' net type not supported')
 
@@ -213,80 +218,73 @@ def gurobi_bounds(nn, lower_bounds, upper_bounds):
     m = Model(name='NN')
     m.setParam('OutputFlag', False)
 
-    his = []
-    ris = []
-    for i in range(lower_bounds[0].size):
-        inf = lower_bounds[0][i]
-        sup = upper_bounds[0][i]
+    # Set variables
 
-        hi = m.addVar(vtype=GRB.CONTINUOUS, name='h0' + str(i))
-        his.append(hi)
+    his = [[(m.addVar(lb=lower_bounds[i][j], ub=upper_bounds[i][j], vtype=GRB.CONTINUOUS, name='h' + str(i) + str(j))
+             if i == 0 else
+             m.addVar(lb=-np.inf, vtype=GRB.CONTINUOUS, name='h' + str(i) + str(j)))
+            for j in range(lower_bounds[i].size)]
+           for i in range(len(lower_bounds))]
 
-        ri = m.addVar(vtype=GRB.CONTINUOUS, name='r0' + str(i))
-        ris.append(ri)
+    ris = [[m.addVar(lb=-np.inf, vtype=GRB.CONTINUOUS, name='r' + str(i) + str(j))
+            for j in range(lower_bounds[i].size)]
+           for i in range(len(lower_bounds) - 1)]
 
-        if (inf >= 0):
-            m.addConstr(hi >= inf)
-            m.addConstr(hi <= sup)
-            m.addConstr(ri == hi)
-        elif (sup <= 0):
-            m.addConstr(ri == 0)
-        else:
-            k = sup / (sup - inf)
-            t = -sup * inf / (sup - inf)
+    m.update()
 
-            m.addConstr(ri >= 0)
-            m.addConstr(ri >= hi)
-            m.addConstr(ri <= k * hi + t)
+    # Weights & biases operation
 
     for i in range(1, len(lower_bounds)):
-        new_his = []
-        new_ris = []
         for j in range(lower_bounds[i].size):
-            inf = lower_bounds[i][j]
-            sup = upper_bounds[i][j]
+            m.addConstr(his[i][j] == LinExpr(
+                nn.weights[i][j, :], ris[i-1]) + nn.biases[i][j])
 
-            hi = m.addVar(vtype=GRB.CONTINUOUS, name='h' + str(i) + str(j))
-            new_his.append(hi)
+    m.update()
 
-            ri = m.addVar(vtype=GRB.CONTINUOUS, name='r' + str(i) + str(j))
-            new_ris.append(ri)
-
-            hi_val = LinExpr(nn.weights[i][j, :], ris) + nn.biases[i][j]
-
-            m.addConstr(hi_val == hi)
+    for i in range(0, len(lower_bounds)-1):
+        for j in range(lower_bounds[i].size):
+            inf, sup = lower_bounds[i][j], upper_bounds[i][j]
 
             if (inf >= 0):
-                m.addConstr(ri == hi)
+                m.addConstr(ris[i][j] == his[i][j])
             elif (sup <= 0):
-                m.addConstr(ri == 0)
+                m.addConstr(ris[i][j] == 0)
             else:
-                k = sup / (sup - inf)
-                t = -sup * inf / (sup - inf)
+                k, t = sup / (sup - inf), -sup * inf / (sup - inf)
 
-                m.addConstr(ri >= 0)
-                m.addConstr(ri >= hi)
-                m.addConstr(ri <= k * hi + t)
+                m.addConstr(ris[i][j] >= 0)
+                m.addConstr(ris[i][j] >= his[i][j])
+                m.addConstr(ris[i][j] <= k * his[i][j] + t)
 
-        his = new_his
-        ris = new_ris
+    m.update()
 
-    output_lower_bounds = []
-    output_upper_bounds = []
-    for i in range(len(his)):
-        m.setObjective(his[i], GRB.MINIMIZE)
+    output_lower_bounds, output_upper_bounds = (
+        [None for _ in enumerate(his[-1])],
+        [None for _ in enumerate(his[-1])]
+    )
+
+    for i in range(len(his[-1])):
+        m.reset()
+        m.setObjective(his[-1][i], GRB.MINIMIZE)
+        m.write("models/model_c_min.lp")
         m.optimize()
-        output_lower_bounds.append(m.objVal)
+        try:
+            output_lower_bounds[i] = m.objVal
+        except:
+            print(f"Can't find lower bound for neuron {i}")
 
-        m.setObjective(his[i], GRB.MAXIMIZE)
+        m.setObjective(his[-1][i], GRB.MAXIMIZE)
+        m.write("models/model_c_max.lp")
         m.optimize()
-        output_upper_bounds.append(m.objVal)
+        try:
+            output_upper_bounds[i] = m.objVal
+        except:
+            print(f"Can't find upper bound for neuron {i}")
 
     return output_lower_bounds, output_upper_bounds
 
 
 if __name__ == '__main__':
-    from sys import argv
     if len(argv) < 3 or len(argv) > 4:
         print('usage: python3.6 ' + argv[0] + ' net.txt spec.txt [timeout]')
         exit(1)
@@ -306,13 +304,6 @@ if __name__ == '__main__':
     LB_N0, UB_N0 = get_perturbed_image(x0_low, epsilon)
 
     lower_bounds, upper_bounds = get_bounds(nn, LB_N0, UB_N0)
-
-    lower_bounds = [-np.ones(2), -np.ones(2), np.ones(2)]
-    upper_bounds = [np.ones(2), np.ones(2), np.ones(2)]
-    nn = layers()
-    nn.weights = [np.ones((2, 2)) * 0.5, np.ones((2, 2))
-                  * 0.5, np.ones((2, 2)) * 0.5]
-    nn.biases = [np.zeros(2), np.zeros(2), np.zeros(2)]
 
     output_lower_bounds, output_upper_bounds = gurobi_bounds(
         nn, lower_bounds, upper_bounds)
