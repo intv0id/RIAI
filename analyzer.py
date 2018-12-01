@@ -135,16 +135,6 @@ def generate_linexpr0(weights, bias, size):
         elina_linexpr0_set_coeff_scalar_double(linexpr0, i, weights[i])
     return linexpr0
 
-def print_bounds(bounds, size):
-    for i in range(size):
-        inf = bounds[i].contents.inf.contents.val.dbl
-        sup = bounds[i].contents.sup.contents.val.dbl
-        print('[' + str(inf) + ',' + str(sup) + '] ', end='')
-    print()
-
-
-use_gurobi = True
-
 
 def analyze(nn, LB_N0, UB_N0, label):
     num_pixels = len(LB_N0)
@@ -155,7 +145,7 @@ def analyze(nn, LB_N0, UB_N0, label):
     for i in range(num_pixels):
         elina_interval_set_double(itv[i], LB_N0[i], UB_N0[i])
 
-    # Construct input abstraction
+    # construct input abstraction
     element = elina_abstract0_of_box(man, 0, num_pixels, itv)
     elina_interval_array_free(itv, num_pixels)
     for layerno in range(numlayer):
@@ -166,90 +156,28 @@ def analyze(nn, LB_N0, UB_N0, label):
             num_in_pixels = dims.intdim + dims.realdim
             num_out_pixels = len(weights)
 
-            # if(layerno > 0):
-            #     values = elina_abstract0_to_box(man, element)
-            #     print_bounds(values, num_in_pixels)
-            #     elina_interval_array_free(values, num_in_pixels)
-                
-            if (use_gurobi and layerno > 0):
-                values = elina_abstract0_to_box(man, element)
-                m = Model(name=str(layerno))
-                m.setParam('OutputFlag', False)
-                rs = []
-
-                for i in range(num_in_pixels):
-                    inf = values[i].contents.inf.contents.val.dbl
-                    sup = values[i].contents.sup.contents.val.dbl
-
-                    ri = m.addVar(vtype=GRB.CONTINUOUS)
-                    hi = m.addVar(vtype=GRB.CONTINUOUS)
-
-                    if (inf >= 0):
-                        m.addConstr(ri == hi)
-                        m.addConstr(hi >= inf)
-                        m.addConstr(hi <= sup)
-                    elif (sup <= 0):
-                        m.addConstr(ri == 0)
-                    else:
-                        k = sup / (sup - inf)
-                        t = -sup * inf / (sup - inf)
-
-                        m.addConstr(ri >= 0)
-                        m.addConstr(ri >= hi)
-                        m.addConstr(ri <= k * hi + t)
-
-                    rs.append(ri)
-                
-                elina_interval_array_free(values, num_in_pixels)
-
-                itv = elina_interval_array_alloc(num_out_pixels)
-                for i in range(num_out_pixels):
-                    obj = 0
-
-                    for j in range(num_in_pixels):
-                        obj += rs[j] * weights[i, j]
-
-                    m.setObjective(obj, GRB.MINIMIZE)
-                    m.optimize()
-                    minVal = m.objVal
-
-                    m.setObjective(obj, GRB.MAXIMIZE)
-                    m.optimize()
-                    maxVal = m.objVal
-
-                    elina_interval_set_double(itv[i], minVal, maxVal)
-                
-                elina_abstract0_free(man, element)
-                element = elina_abstract0_of_box(man, 0, num_out_pixels, itv)
-
-                elina_interval_array_free(itv, num_out_pixels)
-            else:
-                dimadd = elina_dimchange_alloc(0, num_out_pixels)
-                for i in range(num_out_pixels):
-                    dimadd.contents.dim[i] = num_in_pixels
-
-                elina_abstract0_add_dimensions(man, True, element, dimadd, False)
-                elina_dimchange_free(dimadd)
-                np.ascontiguousarray(weights, dtype=np.double)
-                np.ascontiguousarray(biases, dtype=np.double)
-                var = num_in_pixels
-                # Handle affine layer
-                for i in range(num_out_pixels):
-                    tdim = ElinaDim(var)
-                    linexpr0 = generate_linexpr0(
-                        weights[i], biases[i], num_in_pixels)
-                    element = elina_abstract0_assign_linexpr_array(
-                        man, True, element, tdim, linexpr0, 1, None)
-                    var += 1
-
-                dimrem = elina_dimchange_alloc(0, num_in_pixels)
-                for i in range(num_in_pixels):
-                    dimrem.contents.dim[i] = i
-
-                elina_abstract0_remove_dimensions(man, True, element, dimrem)
-                elina_dimchange_free(dimrem)
-
-            # Handle ReLU layer
+            dimadd = elina_dimchange_alloc(0, num_out_pixels)
+            for i in range(num_out_pixels):
+                dimadd.contents.dim[i] = num_in_pixels
+            elina_abstract0_add_dimensions(man, True, element, dimadd, False)
+            elina_dimchange_free(dimadd)
+            np.ascontiguousarray(weights, dtype=np.double)
+            np.ascontiguousarray(biases, dtype=np.double)
+            var = num_in_pixels
+            # handle affine layer
+            for i in range(num_out_pixels):
+                tdim = ElinaDim(var)
+                linexpr0 = generate_linexpr0(
+                    weights[i], biases[i], num_in_pixels)
+                element = elina_abstract0_assign_linexpr_array(
+                    man, True, element, tdim, linexpr0, 1, None)
+                var += 1
+            dimrem = elina_dimchange_alloc(0, num_in_pixels)
+            for i in range(num_in_pixels):
+                dimrem.contents.dim[i] = i
+            elina_abstract0_remove_dimensions(man, True, element, dimrem)
+            elina_dimchange_free(dimrem)
+            # handle ReLU layer
             if(nn.layertypes[layerno] == 'ReLU'):
                 element = relu_box_layerwise(
                     man, True, element, 0, num_out_pixels)
@@ -260,10 +188,10 @@ def analyze(nn, LB_N0, UB_N0, label):
 
     dims = elina_abstract0_dimension(man, element)
     output_size = dims.intdim + dims.realdim
-    # Get bounds for each output neuron
+    # get bounds for each output neuron
     bounds = elina_abstract0_to_box(man, element)
 
-    # If epsilon is zero, try to classify else verify robustness
+    # if epsilon is zero, try to classify else verify robustness
 
     verified_flag = True
     predicted_label = 0
@@ -305,7 +233,7 @@ if __name__ == '__main__':
     netname = argv[1]
     specname = argv[2]
     epsilon = float(argv[3])
-    # c_label = int(argv[4])
+    #c_label = int(argv[4])
     with open(netname, 'r') as netfile:
         netstring = netfile.read()
     with open(specname, 'r') as specfile:
