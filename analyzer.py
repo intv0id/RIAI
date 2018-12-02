@@ -191,6 +191,9 @@ def analyze(nn, LB_N0, UB_N0, label):
     # get bounds for each output neuron
     bounds = elina_abstract0_to_box(man, element)
 
+    # for i in range(output_size):
+    #     print(bounds[i].contents.inf.contents.val.dbl, bounds[i].contents.sup.contents.val.dbl)
+
     # if epsilon is zero, try to classify else verify robustness
 
     verified_flag = True

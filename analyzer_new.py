@@ -138,23 +138,23 @@ def generate_linexpr0(weights, bias, size):
     return linexpr0
 
 
-def get_bounds(nn, LB_N0, UB_N0):
-    num_pixels = len(LB_N0)
-    nn.ffn_counter = 0
+def elina_bounds(nn, LB_N0, UB_N0, start):
+    start_size = len(LB_N0)
+    nn.ffn_counter = start
     numlayer = nn.numlayer
 
-    lower_bounds = []
-    upper_bounds = []
+    hi_lower_bounds = []
+    hi_upper_bounds = []
 
     man = elina_box_manager_alloc()
-    itv = elina_interval_array_alloc(num_pixels)
-    for i in range(num_pixels):
+    itv = elina_interval_array_alloc(start_size)
+    for i in range(start_size):
         elina_interval_set_double(itv[i], LB_N0[i], UB_N0[i])
 
     # construct input abstraction
-    element = elina_abstract0_of_box(man, 0, num_pixels, itv)
-    elina_interval_array_free(itv, num_pixels)
-    for layerno in range(numlayer):
+    element = elina_abstract0_of_box(man, 0, start_size, itv)
+    elina_interval_array_free(itv, start_size)
+    for layerno in range(start, numlayer):
         if(nn.layertypes[layerno] in ['ReLU', 'Affine']):
             weights = nn.weights[nn.ffn_counter]
             biases = nn.biases[nn.ffn_counter]
@@ -195,8 +195,8 @@ def get_bounds(nn, LB_N0, UB_N0):
                 layer_lower_bounds[i] = bounds[i].contents.inf.contents.val.dbl
                 layer_upper_bounds[i] = bounds[i].contents.sup.contents.val.dbl
 
-            lower_bounds.append(layer_lower_bounds)
-            upper_bounds.append(layer_upper_bounds)
+            hi_lower_bounds.append(layer_lower_bounds)
+            hi_upper_bounds.append(layer_upper_bounds)
 
             elina_interval_array_free(bounds, num_out_pixels)
 
@@ -208,40 +208,50 @@ def get_bounds(nn, LB_N0, UB_N0):
         else:
             print(' net type not supported')
 
+    out_lower_bounds = np.zeros(num_out_pixels)
+    out_upper_bounds = np.zeros(num_out_pixels)
+
+    bounds = elina_abstract0_to_box(man, element)
+
+    for i in range(num_out_pixels):
+        out_lower_bounds[i] = bounds[i].contents.inf.contents.val.dbl
+        out_upper_bounds[i] = bounds[i].contents.sup.contents.val.dbl
+
+    elina_interval_array_free(bounds, num_out_pixels)
+
     elina_abstract0_free(man, element)
     elina_manager_free(man)
 
-    return lower_bounds, upper_bounds
+    return hi_lower_bounds, hi_upper_bounds, out_lower_bounds, out_upper_bounds
 
 
-def gurobi_bounds(nn, lower_bounds, upper_bounds):
+def gurobi_bounds(nn, lower_bounds, upper_bounds, steps):
     m = Model(name='NN')
     m.setParam('OutputFlag', False)
 
     # Set variables
 
-    his = [[(m.addVar(lb=lower_bounds[i][j], ub=upper_bounds[i][j], vtype=GRB.CONTINUOUS, name='h' + str(i) + str(j))
+    his = [[(m.addVar(lb=lower_bounds[i][j], ub=upper_bounds[i][j], vtype=GRB.CONTINUOUS, name='h_' + str(i) + '_' + str(j))
              if i == 0 else
-             m.addVar(lb=-np.inf, vtype=GRB.CONTINUOUS, name='h' + str(i) + str(j)))
+             m.addVar(lb=-np.inf, vtype=GRB.CONTINUOUS, name='h_' + str(i) + '_' + str(j)))
             for j in range(lower_bounds[i].size)]
-           for i in range(len(lower_bounds))]
+           for i in range(steps)]
 
-    ris = [[m.addVar(lb=-np.inf, vtype=GRB.CONTINUOUS, name='r' + str(i) + str(j))
+    ris = [[m.addVar(lb=-np.inf, vtype=GRB.CONTINUOUS, name='r_' + str(i) + '_' + str(j))
+            if nn.layertypes[i] in ['ReLU'] else his[i][j]
             for j in range(lower_bounds[i].size)]
-           for i in range(len(lower_bounds) - 1)]
-
-    m.update()
+           for i in range(steps)]
 
     # Weights & biases operation
 
-    for i in range(1, len(lower_bounds)):
+    for i in range(1, steps):
         for j in range(lower_bounds[i].size):
             m.addConstr(his[i][j] == LinExpr(
                 nn.weights[i][j, :], ris[i-1]) + nn.biases[i][j])
 
-    m.update()
-
-    for i in range(0, len(lower_bounds)-1):
+    for i in range(0, steps):
+        if nn.layertypes[i] not in ['ReLU']:
+            continue
         for j in range(lower_bounds[i].size):
             inf, sup = lower_bounds[i][j], upper_bounds[i][j]
 
@@ -256,25 +266,22 @@ def gurobi_bounds(nn, lower_bounds, upper_bounds):
                 m.addConstr(ris[i][j] >= his[i][j])
                 m.addConstr(ris[i][j] <= k * his[i][j] + t)
 
-    m.update()
-
     output_lower_bounds, output_upper_bounds = (
-        [None for _ in enumerate(his[-1])],
-        [None for _ in enumerate(his[-1])]
+        [None for _ in enumerate(ris[-1])],
+        [None for _ in enumerate(ris[-1])]
     )
 
-    for i in range(len(his[-1])):
-        m.reset()
-        m.setObjective(his[-1][i], GRB.MINIMIZE)
-        m.write("models/model_c_min.lp")
+    for i in range(len(ris[-1])):
+        m.setObjective(ris[-1][i], GRB.MINIMIZE)
+        # m.write("models/model_c_min.lp")
         m.optimize()
         try:
             output_lower_bounds[i] = m.objVal
         except:
             print(f"Can't find lower bound for neuron {i}")
 
-        m.setObjective(his[-1][i], GRB.MAXIMIZE)
-        m.write("models/model_c_max.lp")
+        m.setObjective(ris[-1][i], GRB.MAXIMIZE)
+        # m.write("models/model_c_max.lp")
         m.optimize()
         try:
             output_upper_bounds[i] = m.objVal
@@ -284,14 +291,49 @@ def gurobi_bounds(nn, lower_bounds, upper_bounds):
     return output_lower_bounds, output_upper_bounds
 
 
+def predict_label(lb, ub):
+    nr_labels = len(lb)
+    predicted_label = 0
+    predicted_flag = False
+
+    for i in range(nr_labels):
+        flag = True
+        for j in range(nr_labels):
+            if(j != i):
+                if(lb[i] <= ub[j]):
+                    flag = False
+                    break
+
+        if(flag):
+            predicted_label = i
+            predicted_flag = True
+            break
+
+    return predicted_label, predicted_flag
+
+
+def verify(lb, ub, label):
+    nr_labels = len(lb)
+    verified = True
+
+    for j in range(nr_labels):
+        if(j != label):
+            if(lb[label] <= ub[j]):
+                verified = False
+                break
+
+    return verified
+
+
 if __name__ == '__main__':
-    if len(argv) < 3 or len(argv) > 4:
+    if len(argv) < 3:
         print('usage: python3.6 ' + argv[0] + ' net.txt spec.txt [timeout]')
         exit(1)
 
     netname = argv[1]
     specname = argv[2]
     epsilon = float(argv[3])
+    gurobi_steps = int(argv[4])
 
     with open(netname, 'r') as netfile:
         netstring = netfile.read()
@@ -301,11 +343,50 @@ if __name__ == '__main__':
 
     nn = parse_net(netstring)
     x0_low, x0_high = parse_spec(specstring)
-    LB_N0, UB_N0 = get_perturbed_image(x0_low, epsilon)
 
-    lower_bounds, upper_bounds = get_bounds(nn, LB_N0, UB_N0)
+    # Image without perturbations
+    lb_clear, ub_clear = get_perturbed_image(x0_low, 0)
+    _, _, out_lower, out_upper = elina_bounds(nn, lb_clear, ub_clear, 0)
+    predicted_label, predicted_flag = predict_label(out_lower, out_upper)
 
-    output_lower_bounds, output_upper_bounds = gurobi_bounds(
-        nn, lower_bounds, upper_bounds)
+    if(not predicted_flag):
+        print('Image not correctly classified by the network')
+        print('Expected label:', int(x0_low[0]))
+        print('Classified label:', predicted_label)
+        sys.exit()
 
-    print(output_lower_bounds, output_upper_bounds)
+    print('Classified label:', predicted_label)
+
+    # Image with perturbations
+    lb_noisy, ub_noisy = get_perturbed_image(x0_low, epsilon)
+
+    start = time.time()
+
+    hi_lower, hi_upper, out_lower, out_upper = elina_bounds(
+        nn, lb_noisy, ub_noisy, 0)
+    # print('ELINA')
+    # print('Lower hi:', hi_lower[-1])
+    # print('Upper hi:', hi_upper[-1])
+    # print('Lower out:', out_lower)
+    # print('Upper out:', out_upper)
+
+    out_lower, out_upper = gurobi_bounds(
+        nn, hi_lower, hi_upper, gurobi_steps)
+
+    # print('GUROBI')
+    # print('Lower out:', out_lower)
+    # print('Upper out:', out_upper)
+
+    if(gurobi_steps < nn.numlayer):
+        hi_lower, hi_upper, out_lower, out_upper = elina_bounds(
+            nn, out_lower, out_upper, gurobi_steps)
+        # print('Mix')
+        # print('Lower out:', out_lower)
+        # print('Upper out:', out_upper)
+
+    verified = verify(out_lower, out_upper, predicted_label)
+
+    end = time.time()
+
+    print('Verified') if verified else print('Cannot be verified')
+    print('Analysis time:', (end-start), 'seconds')
