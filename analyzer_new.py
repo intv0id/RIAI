@@ -240,7 +240,7 @@ def gurobi_bounds(nn, lower_bounds, upper_bounds, steps):
     ris = [[m.addVar(lb=-np.inf, vtype=GRB.CONTINUOUS, name='r_' + str(i) + '_' + str(j))
             if nn.layertypes[i] in ['ReLU'] else his[i][j]
             for j in range(lower_bounds[i].size)]
-           for i in range(steps)]
+           for i in range(steps - 1)]
 
     # Weights & biases operation
 
@@ -249,7 +249,7 @@ def gurobi_bounds(nn, lower_bounds, upper_bounds, steps):
             m.addConstr(his[i][j] == LinExpr(
                 nn.weights[i][j, :], ris[i-1]) + nn.biases[i][j])
 
-    for i in range(0, steps):
+    for i in range(0, steps - 1):
         if nn.layertypes[i] not in ['ReLU']:
             continue
         for j in range(lower_bounds[i].size):
@@ -267,12 +267,12 @@ def gurobi_bounds(nn, lower_bounds, upper_bounds, steps):
                 m.addConstr(ris[i][j] <= k * his[i][j] + t)
 
     output_lower_bounds, output_upper_bounds = (
-        [None for _ in enumerate(ris[-1])],
-        [None for _ in enumerate(ris[-1])]
+        [None for _ in enumerate(his[-1])],
+        [None for _ in enumerate(his[-1])]
     )
 
-    for i in range(len(ris[-1])):
-        m.setObjective(ris[-1][i], GRB.MINIMIZE)
+    for i in range(len(his[-1])):
+        m.setObjective(his[-1][i], GRB.MINIMIZE)
         # m.write("models/model_c_min.lp")
         m.optimize()
         try:
@@ -280,13 +280,19 @@ def gurobi_bounds(nn, lower_bounds, upper_bounds, steps):
         except:
             print(f"Can't find lower bound for neuron {i}")
 
-        m.setObjective(ris[-1][i], GRB.MAXIMIZE)
+        m.setObjective(his[-1][i], GRB.MAXIMIZE)
         # m.write("models/model_c_max.lp")
         m.optimize()
         try:
             output_upper_bounds[i] = m.objVal
         except:
             print(f"Can't find upper bound for neuron {i}")
+
+    # Apply box relu for the output
+    if nn.layertypes[steps - 1] in ['ReLU']:
+        for i in range(len(his[-1])):
+            output_lower_bounds[i] = max(output_lower_bounds[i], 0)
+            output_upper_bounds[i] = max(output_upper_bounds[i], 0)
 
     return output_lower_bounds, output_upper_bounds
 
@@ -381,8 +387,9 @@ if __name__ == '__main__':
         hi_lower, hi_upper, out_lower, out_upper = elina_bounds(
             nn, out_lower, out_upper, gurobi_steps)
         # print('Mix')
-        # print('Lower out:', out_lower)
-        # print('Upper out:', out_upper)
+
+    print('Lower out:', out_lower)
+    print('Upper out:', out_upper)
 
     verified = verify(out_lower, out_upper, predicted_label)
 
