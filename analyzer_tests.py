@@ -243,7 +243,6 @@ class GurobiLayers(SolverLayer):
         self.m = Model(name='NN')
         self.m.setParam('OutputFlag', False)
         self.dim = [len(elt) for _, elt in enumerate(biases)]
-        self.reludim = self.dim[:] if layertypes[-1] == "ReLU" else self.dim[:-1]
         self.lower_bounds, self.upper_bounds = lower_bounds, upper_bounds
         
         self.define_variables()
@@ -260,26 +259,30 @@ class GurobiLayers(SolverLayer):
         
         self.ris = [[self.m.addVar(lb=-np.inf, vtype=GRB.CONTINUOUS, name=f"ReLU_{i}_{j}") 
             for j in range(self.dim[i])] 
-            for i in range(len(self.reludim))]
+            for i in range(len(self.dim))]
             
         self.m.update()
 
     def add_relu_constraints(self):
-        for i in range(len(self.reludim)):
-            if self.layertypes[i] != 'ReLU': continue
-            for j in range(self.reludim[i]):
-                inf, sup = self.lower_bounds[i][j], self.upper_bounds[i][j]
-                assert inf <= sup
-                if (inf >= 0):
-                    self.m.addConstr(self.ris[i][j] == self.his[i][j])
-                elif (sup <= 0):
-                    self.m.addConstr(self.ris[i][j] == 0)
-                else:
-                    k, t = sup / (sup - inf), -sup * inf / (sup - inf)
+        for i in range(len(self.dim)):
+            if self.layertypes[i] == 'ReLU': 
+                for j in range(self.dim[i]):
+                    inf, sup = self.lower_bounds[i][j], self.upper_bounds[i][j]
+                    assert inf <= sup
+                    if (inf >= 0):
+                        self.m.addConstr(self.ris[i][j] == self.his[i][j])
+                    elif (sup <= 0):
+                        self.m.addConstr(self.ris[i][j] == 0)
+                    else:
+                        k, t = sup / (sup - inf), -sup * inf / (sup - inf)
 
-                    self.m.addConstr(self.ris[i][j] >= 0)
-                    self.m.addConstr(self.ris[i][j] >= self.his[i][j])
-                    self.m.addConstr(self.ris[i][j] <= k * self.his[i][j] + t)
+                        self.m.addConstr(self.ris[i][j] >= 0)
+                        self.m.addConstr(self.ris[i][j] >= self.his[i][j])
+                        self.m.addConstr(self.ris[i][j] <= k * self.his[i][j] + t)
+            else:
+                for j in range(self.dim[i]):
+                    self.m.addConstr(self.ris[i][j] == self.his[i][j])
+
 
         self.m.update()
     
@@ -309,14 +312,15 @@ class GurobiLayers(SolverLayer):
         mt = self.m.addVar(lb=-np.inf, vtype=GRB.CONTINUOUS, name="Mini_true")
         
         self.m.addConstr( mt == 
-             (self.his[-1][true_label])
-             if self.layertypes[-1] == "ReLU" else
-             (max_(self.his[-1][true_label]), 0)
+            (max_(self.his[-1][true_label], 0)
+            if self.layertypes[-1] == "ReLU" else
+            self.his[-1][true_label])
         )
+
         self.m.addConstr( mf == 
-             (max_(self.his[-1][:true_label] + self.his[-1][true_label+1:])) 
+             (max_(self.his[-1][:true_label] + self.his[-1][true_label+1:], 0)
              if self.layertypes[-1] == "ReLU" else
-             (max_(self.his[-1][:true_label] + self.his[-1][true_label+1:], 0)) 
+             max_(self.his[-1][:true_label] + self.his[-1][true_label+1:])) 
         )
         
         
@@ -378,31 +382,65 @@ class Pipeline():
 
 
 class Strategy1(Pipeline):
+    """Processing all at once"""
     def compute(self):
         lb, ub = ElinaLayers(
             self.layertypes, self.weights, self.biases, self.man
         ).compute(self.LB_N0, self.UB_N0)
         gl = GurobiLayers(self.layertypes, self.weights, self.biases, lb, ub)
-        label, verified = gl.compute(write=True, out=True, true_label=self.true_label)
+        label, verified = gl.compute(write=False, out=True, true_label=self.true_label)
         return label, verified
 
 class Strategy2(Pipeline):
+    """ Processing `step` layers per `step` layers"""
+    step = 3
     def compute(self):
-        step = 3
         lb0, ub0 = self.LB_N0, self.UB_N0
         
-        for i in range(0, self.nb_layers, step):
-            j = min(i+step, self.nb_layers)
+        for i in range(0, self.nb_layers, self.step):
+            j = min(i+self.step, self.nb_layers)
 
             lb, ub = ElinaLayers(
                 self.layertypes[i:j], self.weights[i:j], self.biases[i:j], self.man
             ).compute(lb0, ub0)
             gl = GurobiLayers(self.layertypes[i:j], self.weights[i:j], self.biases[i:j], lb, ub)
 
-            if min(i+step, self.nb_layers) < self.nb_layers:
-                lb0, ub0 = gl.compute(write=True, out=False)
+            if j < self.nb_layers:
+                lb0, ub0 = gl.compute(write=False, out=False)
             else : 
-                return gl.compute(write=True, out=True, true_label=self.true_label)
+                return gl.compute(write=False, out=True, true_label=self.true_label)
+
+
+class Strategy3(Pipeline):
+    """Processing neurons 1024 at a time"""
+    neuron_steps = 1024
+
+    def indexes(self):
+        idx = [0]
+        counter = 0
+        for i, l in enumerate(map(len, self.biases)):
+            if counter >= self.neuron_steps:
+                idx.append(i)
+                counter = 0
+            counter += l
+        idx.append(self.nb_layers)
+        return idx
+
+    def compute(self):
+        lb0, ub0 = self.LB_N0, self.UB_N0
+        idx = self.indexes()
+        
+        for k in range(len(idx)-1):
+            [i, j] = idx[k:k+2]
+            lb, ub = ElinaLayers(
+                self.layertypes[i:j], self.weights[i:j], self.biases[i:j], self.man
+            ).compute(lb0, ub0)
+            gl = GurobiLayers(self.layertypes[i:j], self.weights[i:j], self.biases[i:j], lb, ub)
+
+            if j < self.nb_layers:
+                lb0, ub0 = gl.compute(write=False, out=False)
+            else : 
+                return gl.compute(write=False, out=True, true_label=self.true_label)
         
 
 def test_strat(strategies, netname, specname, epsilon):
@@ -431,7 +469,7 @@ def main():
     epsilon = float(argv[3])
 
     test_strat(
-        strategies=[Strategy1, Strategy2],
+        strategies=[Strategy1, Strategy3],
         netname=netname, 
         specname=specname, 
         epsilon=epsilon
