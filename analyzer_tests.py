@@ -334,8 +334,8 @@ class GurobiLayers(SolverLayer):
             return true_label, self.verify_out(true_label=true_label, write=write)
         else:
             return (
-                [self.optimize_one(value=self.his[-1][j], minimize=True, write=write, out=out) for j in range(self.dim[-1])],
-                [self.optimize_one(value=self.his[-1][j], minimize=False, write=write, out=out) for j in range(self.dim[-1])],
+                [self.optimize_one(value=self.his[-1][j], minimize=True, write=write) for j in range(self.dim[-1])],
+                [self.optimize_one(value=self.his[-1][j], minimize=False, write=write) for j in range(self.dim[-1])],
             )
 
 
@@ -385,7 +385,41 @@ class Strategy1(Pipeline):
         gl = GurobiLayers(self.layertypes, self.weights, self.biases, lb, ub)
         label, verified = gl.compute(write=True, out=True, true_label=self.true_label)
         return label, verified
+
+class Strategy2(Pipeline):
+    def compute(self):
+        step = 3
+        lb0, ub0 = self.LB_N0, self.UB_N0
         
+        for i in range(0, self.nb_layers, step):
+            j = min(i+step, self.nb_layers)
+
+            lb, ub = ElinaLayers(
+                self.layertypes[i:j], self.weights[i:j], self.biases[i:j], self.man
+            ).compute(lb0, ub0)
+            gl = GurobiLayers(self.layertypes[i:j], self.weights[i:j], self.biases[i:j], lb, ub)
+
+            if min(i+step, self.nb_layers) < self.nb_layers:
+                lb0, ub0 = gl.compute(write=True, out=False)
+            else : 
+                return gl.compute(write=True, out=True, true_label=self.true_label)
+        
+
+def test_strat(strategies, netname, specname, epsilon):
+    for s in strategies:
+        analyzer = s(netname, specname, epsilon)
+
+        start = time.time()
+        pred_label, res = analyzer.compute()
+        end = time.time()
+
+        del analyzer
+
+        print(f"Strategy <{s.__name__}>")
+        print("{neg}verified".format(neg = "" if res else "can not be "))
+        print("analysis time: ", (end-start), " seconds")
+        print("\n")
+    
 
 def main():
     if len(argv) not in range(3, 5):
@@ -396,16 +430,13 @@ def main():
     specname = argv[2]
     epsilon = float(argv[3])
 
-    analyzer = Strategy1(netname, specname, epsilon)
+    test_strat(
+        strategies=[Strategy1, Strategy2],
+        netname=netname, 
+        specname=specname, 
+        epsilon=epsilon
+    )
 
-    start = time.time()
-    pred_label, res = analyzer.compute()
-    end = time.time()
-
-    del analyzer
-
-    print("{neg}verified".format(neg = "" if res else "can not be "))
-    print("analysis time: ", (end-start), " seconds")
 
 if __name__ == "__main__":
     main()
