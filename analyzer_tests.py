@@ -2,26 +2,29 @@
 # coding: utf-8
 
 
-import csv
-import ctypes
-import re
 import sys
-import time
-from ctypes.util import find_library
-from sys import argv
+sys.path.insert(0, '../ELINA/python_interface/')
+
 
 import numpy as np
-from gurobipy import *
+import re
+import csv
 
-from elina_abstract0 import *
 from elina_box import *
-from elina_dimension import *
 from elina_interval import *
-from elina_lincons0 import *
-from elina_linexpr0 import *
+from elina_abstract0 import *
 from elina_manager import *
+from elina_dimension import *
 from elina_scalar import *
+from elina_interval import *
+from elina_linexpr0 import *
+from elina_lincons0 import *
 
+from sys import argv
+import ctypes
+from ctypes.util import find_library
+from gurobipy import *
+import time
 sys.path.insert(0, "../ELINA/python_interface/")
 
 
