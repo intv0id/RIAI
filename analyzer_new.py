@@ -138,10 +138,9 @@ def generate_linexpr0(weights, bias, size):
     return linexpr0
 
 
-def elina_bounds(nn, LB_N0, UB_N0, start):
+def elina_bounds(nn, LB_N0, UB_N0, start=0, finish=None):
     start_size = len(LB_N0)
-    nn.ffn_counter = start
-    numlayer = nn.numlayer
+    numlayer = finish if finish != None else nn.numlayer
 
     hi_lower_bounds = []
     hi_upper_bounds = []
@@ -156,8 +155,8 @@ def elina_bounds(nn, LB_N0, UB_N0, start):
     elina_interval_array_free(itv, start_size)
     for layerno in range(start, numlayer):
         if(nn.layertypes[layerno] in ['ReLU', 'Affine']):
-            weights = nn.weights[nn.ffn_counter]
-            biases = nn.biases[nn.ffn_counter]
+            weights = nn.weights[layerno]
+            biases = nn.biases[layerno]
             dims = elina_abstract0_dimension(man, element)
             num_in_pixels = dims.intdim + dims.realdim
             num_out_pixels = len(weights)
@@ -204,7 +203,6 @@ def elina_bounds(nn, LB_N0, UB_N0, start):
             if(nn.layertypes[layerno] == 'ReLU'):
                 element = relu_box_layerwise(
                     man, True, element, 0, num_out_pixels)
-            nn.ffn_counter += 1
         else:
             print(' net type not supported')
 
@@ -361,7 +359,16 @@ def gurobi_bounds(nn, lb, ub):
     m, his = gurobi_create_model(nn, lb, ub)
     out_lb, out_ub = gurobi_optimize_bounds(m, his)
 
-    return out_lb, out_ub
+    out_lb_relu = np.copy(out_lb)
+    out_ub_relu = np.copy(out_ub)
+
+    # Apply box relu for the output
+    if nn.layertypes[len(lb) - 1] in ['ReLU']:
+        for j in range(out_lb_relu.size):
+            out_lb_relu[j] = max(out_lb_relu[j], 0)
+            out_ub_relu[j] = max(out_ub_relu[j], 0)
+
+    return out_lb, out_ub, out_lb_relu, out_ub_relu
 
 
 def gurobi_diff(nn, lb, ub, label):
@@ -405,7 +412,7 @@ def verify(lb, ub, label):
 
 def classify(nn, img):
     lb, ub = get_perturbed_image(img, 0)
-    _, _, out_lb, out_ub = elina_bounds(nn, lb, ub, 0)
+    _, _, out_lb, out_ub = elina_bounds(nn, lb, ub)
     predicted_label, predicted_flag = predict_label(out_lb, out_ub)
 
     if(not predicted_flag):
@@ -419,9 +426,13 @@ def classify(nn, img):
 
 
 def elina_e2e(nn, lb, ub, label):
-    _, _, out_lb, out_ub = elina_bounds(
-        nn, lb, ub, 0)
-    return verify(out_lb, out_ub, label)
+    _, _, out_lb_relu, out_ub_relu = elina_bounds(
+        nn, lb, ub)
+
+    # print('Lower out:', out_lb_relu)
+    # print('Upper out:', out_ub_relu)
+
+    return verify(out_lb_relu, out_ub_relu, label)
 
 
 def gurobi_incremental(nn, input_lb, input_ub, label):
@@ -429,21 +440,37 @@ def gurobi_incremental(nn, input_lb, input_ub, label):
     ub = [input_ub]
 
     for i in range(nn.numlayer):
-        try:
-            out_lb, out_ub = gurobi_bounds(nn, lb, ub)
-            lb.append(out_lb)
-            ub.append(out_ub)
-        except:
-            break
-        
-    out_lb_relu = np.copy(out_lb)
-    out_ub_relu = np.copy(out_ub)
+        out_lb, out_ub, out_lb_relu, out_ub_relu = gurobi_bounds(nn, lb, ub)
 
-    # Apply box relu for the output
-    if nn.layertypes[nn.numlayer - 1] in ['ReLU']:
-        for i in range(out_lb_relu.size):
-            out_lb_relu[i] = max(out_lb_relu[i], 0)
-            out_ub_relu[i] = max(out_ub_relu[i], 0)
+        lb.append(out_lb)
+        ub.append(out_ub)
+
+    # print('Lower out:', out_lb_relu)
+    # print('Upper out:', out_ub_relu)
+
+    return verify(out_lb_relu, out_ub_relu, label)
+
+
+def gurobi_early_stopping(nn, input_lb, input_ub, label):
+    lb = [input_lb]
+    ub = [input_ub]
+
+    for i in range(nn.numlayer):
+        s = time.time()
+        out_lb, out_ub, out_lb_relu, out_ub_relu = gurobi_bounds(nn, lb, ub)
+        t = time.time()
+        print(f'Optimize h{i}: {t - s}')
+
+        lb.append(out_lb)
+        ub.append(out_ub)
+
+        if i + 1 < nn.numlayer:
+            _, _, out_lb_relu, out_ub_relu = elina_bounds(
+                nn, out_lb_relu, out_ub_relu, start=i + 1)
+
+            if verify(out_lb_relu, out_ub_relu, label):
+                print('Verified early :)')
+                return True
 
     # print('Lower out:', out_lb_relu)
     # print('Upper out:', out_ub_relu)
@@ -505,7 +532,13 @@ if __name__ == '__main__':
     # print(f'Gurobi incremental diff: verified={verified}, time={end-start}')
 
     # Gurobi incremental
+    # start = time.time()
+    # verified = gurobi_incremental(nn, lb_noisy, ub_noisy, predicted_label)
+    # end = time.time()
+    # print(f'Gurobi incremental: verified={verified}, time={end-start}')
+
+    # Gurobi incremental partial
     start = time.time()
-    verified = gurobi_incremental(nn, lb_noisy, ub_noisy, predicted_label)
+    verified = gurobi_early_stopping(nn, lb_noisy, ub_noisy, predicted_label)
     end = time.time()
-    print(f'Gurobi incremental: verified={verified}, time={end-start}')
+    print(f'Gurobi early stopping: verified={verified}, time={end-start}')
