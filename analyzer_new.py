@@ -300,29 +300,59 @@ def gurobi_optimize_bounds(m, his):
         try:
             out_ub[i] = m.objVal
         except:
-            print(f"Can't find upper bound for neuron {i}")
+            raise Exception(f"Can't find upper bound for neuron {i}")
 
     return out_lb, out_ub
 
 
-def gurobi_optimize_diff(nn, m, his, label):
-    verified = True
+# def gurobi_optimize_diff(nn, m, his, label):
+#     verified = True
 
-    for i in range(len(his)):
-        if i != label:
-            # TODO: Handle relu layer
-            m.setObjective(his[label] - his[i], GRB.MINIMIZE)
-            m.optimize()
+#     for i in range(len(his)):
+#         if i != label:
+#             # TODO: Handle relu layer
+#             m.setObjective(his[label] - his[i], GRB.MINIMIZE)
+#             m.optimize()
 
-        try:
-            verified = m.objVal > 0
-        except:
-            print('Cannot optimize the output difference')
+#         try:
+#             verified = m.objVal > 0
+#         except:
+#             print('Cannot optimize the output difference')
 
-        if not verified:
-            break
+#         if not verified:
+#             break
 
-    return verified
+#     return verified
+
+def gurobi_optimize_diff(m, nn, his, true_label):
+    mf = m.addVar(lb=-np.inf, vtype=GRB.CONTINUOUS, name="Maxi_false")
+    mt = m.addVar(lb=-np.inf, vtype=GRB.CONTINUOUS, name="Mini_true")
+
+    m.addConstr(
+        mt
+        == (
+            max_(his[true_label], 0)
+            if nn.layertypes[-1] == "ReLU"
+            else his[true_label]
+        )
+    )
+
+    m.addConstr(
+        mf
+        == (
+            max_(his[:true_label] + his[true_label + 1 :], 0)
+            if n.layertypes[-1] == "ReLU"
+            else max_(his[:true_label] + his[true_label + 1 :])
+        )
+    )
+
+    m.setObjective(his[label] - his[i], GRB.MINIMIZE)
+    m.optimize()
+
+    try:
+        return m.objVal > 0
+    except:
+        raise Exception("Can't optimize output difference")
 
 
 def gurobi_bounds(nn, lb, ub):
