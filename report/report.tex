@@ -52,9 +52,9 @@ A very simple and fast approach to solve the \gls{nn} robustness problem is to u
 
 \paragraph*{Linear programming}
 
-A more precise but more computationaly intensive technique to verify the robustness of a \gls{nn} is to use a linear solver to propagate the box while approximating better the non-linearities. This can be used of two ways: compute the boxes for a given layer using modeling constraints and the previous layers box values, or directly check for robustness on the last layers based on the previous computed boxes.
+A more precise but more computationaly intensive technique to verify the robustness of a \gls{nn} is to use a linear solver to propagate the box while approximating better the non-linearities. This can be used of two ways: compute the bounds for a given layer using modeling constraints and the previous layers bounds, or directly check for robustness on the last layers based on the approximated previous layers bounds.
 
-We here generaly prefer using \gls{lp} on the first layers of the \gls{nn} not to propagate growing boxes. An analogy can be drawn with low-noise amplifiers in the physics field, for which it is really important to keep the noise minimal at the beginning of the process.
+We generaly prefer using \gls{lp} on the first layers of the \gls{nn} not to propagate growing boxes. An analogy can be drawn with low-noise amplifiers in the physics field, for which it is really important to keep the noise minimal at the beginning of the process.
 
 \section{Heuristics}
 
@@ -62,7 +62,7 @@ In this section we will refer to Box Analysis as ELINA and Linear Programmming r
 
 \paragraph*{Greedy approach}
 
-The first approach and most efficient one for small \gls{nn}s is to iterate over the layers and using \gls{nn} at each step and verifiyng with \gls{ba} as an exit condition. This takes advantage of the cheap computational cost of \gls{ba} and of the incremental precision of \gls{lp}, which has a cost. The biggest verifiable perturbations will take more time than the smaller ones due to the greater number of \gls{lp} calls, but this also returns results very fast for small perturbations.
+The first approach and most efficient one for small \gls{nn}s is to iterate over the layers and using \gls{lp} at each step and verifiyng with \gls{ba} as an exit condition. This takes advantage of the cheap computational cost of \gls{ba} and of the incremental precision of \gls{lp}, which has a cost. The biggest verifiable $\epsilon$-perturbations will take more time than the smaller ones due to the greater number of \gls{lp} calls, but this also returns results very fast for small perturbations.
 
 \begin{algorithm}[H]
 	\scriptsize
@@ -85,7 +85,7 @@ The first approach and most efficient one for small \gls{nn}s is to iterate over
 
 \paragraph*{Large networks strategy}
 
-The strategy developped for large neural networks is inspired for gradient descent and aims to focus the most on the neurons that propagates the greatest part of the interval length to the last layer neurons that prevent us from verifying the robustness property.
+The strategy developped for large neural networks is inspired from gradient descent and aims to focus the most on the neurons that propagates the greatest part of the interval length to the last layer neurons that prevent us from verifying the robustness property.
 
 \begin{algorithm}[H]
 	\scriptsize
@@ -112,7 +112,7 @@ The strategy developped for large neural networks is inspired for gradient desce
 	\caption{Large networks heuristic}
 \end{algorithm}
 
-Here is a more graphical version:
+\noindent In the following, intervals range from green (smallests) to red.
 
 \begin{figure}[H]
 \begin{center}
@@ -123,9 +123,9 @@ Here is a more graphical version:
 
 \section{Performances}
 
-The most important factors in the \gls{lp} analysis complexity seems to be the number of neurons per layer as well as the magnitude of the perturbation. Experimentally, we determined that the complexity for a given network to certify is in $o(exp(\epsilon))$. 
+The most important factors in the \gls{lp} analysis complexity seems to be the number of neurons per layer as well as the magnitude of the perturbation. We determined experimentally a $o(exp(\epsilon))$ complexity to certify a given \gls{nn}. 
 \begin{wrapfigure}{r}{0.23\textwidth}
-	\vspace{-30pt}
+	\vspace{-20pt}
 	\begin{center}
 		\small
 		\begin{tabular}{| c || l | }
@@ -141,9 +141,9 @@ The most important factors in the \gls{lp} analysis complexity seems to be the n
 	\caption{Tested configurations}
 	\vspace{-10pt}
 \end{wrapfigure}
-Hence, reducing the range for the first layers by using \gls{lp} also help to reduce the computational time.
+Hence, reducing the range amplitude for the first layers by using \gls{lp} also help to reduce the computational time.
 
-The model performs the analysis in a few minutes for all of the networks and $\epsilon$-perturbations ranging from $10^{-2}$ to $10^{-4}$ using the greedy algorithm for deep-\gls{nn}s and the Large-net strategy for the narrow-\gls{nn}s.
+\noindent The model performs the analysis in a few minutes for all of the networks and $\epsilon$-perturbations ranging from $10^{-2}$ to $10^{-4}$ using the greedy algorithm for deep-\gls{nn}s and the Large-net strategy for the narrow-\gls{nn}s.
 
 \vfill
 \hrule
