@@ -37,6 +37,12 @@ class layers:
         self.ffn_counter = 0
 
 
+def batch(iterable, n=1):
+    l = len(iterable)
+    for ndx in range(0, l, n):
+        yield iterable[ndx:min(ndx + n, l)]
+
+
 def parse_bias(text):
     if len(text) < 1 or text[0] != '[':
         raise Exception("expected '['")
@@ -239,7 +245,6 @@ def gurobi_create_model(nn, lb, ub):
         his = []
         # Add the next layer constraints using (weights, biases, previous layer (ReLU | Affine))
         for j in range(len(lb[i])):
-            # TODO: Consider removing bounds in here
             hi = m.addVar(
                 lb=lb[i][j], ub=ub[i][j], vtype=GRB.CONTINUOUS, name='h_' + str(i) + '_' + str(j))
             m.addConstr(hi == LinExpr(
@@ -283,11 +288,12 @@ def gurobi_create_model(nn, lb, ub):
     return m, his
 
 
-def gurobi_optimize_bounds(m, his):
+def gurobi_optimize_bounds(m, his, is_relu):
     out_lb = np.zeros(len(his))
     out_ub = np.zeros(len(his))
 
     for i in range(len(his)):
+        # s = time.clock()
         m.setObjective(his[i], GRB.MINIMIZE)
         m.optimize()
         try:
@@ -301,49 +307,63 @@ def gurobi_optimize_bounds(m, his):
             out_ub[i] = m.objVal
         except:
             print(f"Can't find upper bound for neuron {i}")
-
-    return out_lb, out_ub
-
-
-def gurobi_optimize_diff(nn, m, his, label):
-    verified = True
-
-    for i in range(len(his)):
-        if i != label:
-            # TODO: Handle relu layer
-            m.setObjective(his[label] - his[i], GRB.MINIMIZE)
-            m.optimize()
-
-        try:
-            verified = m.objVal > 0
-        except:
-            print('Cannot optimize the output difference')
-
-        if not verified:
-            break
-
-    return verified
-
-
-def gurobi_bounds(nn, lb, ub):
-    m, his = gurobi_create_model(nn, lb, ub)
-    out_lb, out_ub = gurobi_optimize_bounds(m, his)
+        # t = time.clock()
+        # print(f'Optimize neuron {i}: {t - s}')
 
     out_lb_relu = np.copy(out_lb)
     out_ub_relu = np.copy(out_ub)
 
     # Apply box relu for the output
-    if nn.layertypes[len(lb) - 1] in ['ReLU']:
-        for j in range(out_lb_relu.size):
-            out_lb_relu[j] = max(out_lb_relu[j], 0)
-            out_ub_relu[j] = max(out_ub_relu[j], 0)
+    if is_relu:
+        for i in range(len(his)):
+            out_lb_relu[i] = max(out_lb[i], 0)
+            out_ub_relu[i] = max(out_ub[i], 0)
 
     return out_lb, out_ub, out_lb_relu, out_ub_relu
 
 
-def gurobi_diff(nn, lb, ub, label):
+def gurobi_optimize_last(m, his, is_relu, label):
+    out_lb = np.zeros(len(his))
+    out_ub = np.zeros(len(his))
+
+    for i in range(len(his)):
+        # s = time.clock()
+        if i == label:
+            m.setObjective(his[i], GRB.MINIMIZE)
+            m.optimize()
+            try:
+                out_lb[i] = m.objVal
+            except:
+                print(f"Can't find lower bound for neuron {i}")
+        else:
+            m.setObjective(his[i], GRB.MAXIMIZE)
+            m.optimize()
+            try:
+                out_ub[i] = m.objVal
+            except:
+                print(f"Can't find upper bound for neuron {i}")
+        # t = time.clock()
+        # print(f'Optimize o{i}: {t - s}')
+
+    out_lb_relu = np.copy(out_lb)
+    out_ub_relu = np.copy(out_ub)
+
+    # Apply box relu for the output
+    if is_relu:
+        for i in range(len(his)):
+            out_lb_relu[i] = max(out_lb[i], 0)
+            out_ub_relu[i] = max(out_ub[i], 0)
+
+    return out_lb, out_ub, out_lb_relu, out_ub_relu
+
+
+def gurobi_bounds(nn, lb, ub, label):
     m, his = gurobi_create_model(nn, lb, ub)
-    return gurobi_optimize_diff(nn, m, his, label)
+    is_relu = nn.layertypes[len(lb) - 1] in ['ReLU']
+    if len(lb) == nn.numlayer:
+        return gurobi_optimize_last(m, his, is_relu, label)
+    else:
+        return gurobi_optimize_bounds(m, his, is_relu)
 
 
 def predict_label(lb, ub):
@@ -395,28 +415,22 @@ def classify(nn, img):
     return predicted_label, predicted_flag
 
 
-def elina_e2e(nn, lb, ub, label):
-    _, _, out_lb_relu, out_ub_relu = elina_bounds(
-        nn, lb, ub)
-
-    # print('Lower out:', out_lb_relu)
-    # print('Upper out:', out_ub_relu)
-
-    return verify(out_lb_relu, out_ub_relu, label)
-
-
 def gurobi_incremental(nn, input_lb, input_ub, label):
     lb = [input_lb]
     ub = [input_ub]
 
     for i in range(nn.numlayer):
-        out_lb, out_ub, out_lb_relu, out_ub_relu = gurobi_bounds(nn, lb, ub)
+        s = time.clock()
+        out_lb, out_ub, out_lb_relu, out_ub_relu = gurobi_bounds(
+            nn, lb, ub, label)
+        t = time.clock()
+        print(f'Optimize h{i + 1}: {t - s}')
 
         lb.append(out_lb)
         ub.append(out_ub)
 
-    # print('Lower out:', out_lb_relu)
-    # print('Upper out:', out_ub_relu)
+    print('Lower out:', out_lb_relu)
+    print('Upper out:', out_ub_relu)
 
     return verify(out_lb_relu, out_ub_relu, label)
 
@@ -425,22 +439,117 @@ def gurobi_early_stopping(nn, input_lb, input_ub, label):
     lb = [input_lb]
     ub = [input_ub]
 
-    for i in range(nn.numlayer):
-        s = time.time()
-        out_lb, out_ub, out_lb_relu, out_ub_relu = gurobi_bounds(nn, lb, ub)
-        t = time.time()
-        print(f'Optimize h{i}: {t - s}')
+    out_lb_first, out_ub_first, _, _ = elina_bounds(
+        nn, input_lb, input_ub, finish=1)
+
+    lb.append(out_lb_first[-1])
+    ub.append(out_ub_first[-1])
+
+    for i in range(1, nn.numlayer):
+        s = time.clock()
+        out_lb, out_ub, out_lb_relu, out_ub_relu = gurobi_bounds(
+            nn, lb, ub, label)
+        t = time.clock()
+        print(f'Optimize h{i + 1}: {t - s}')
 
         lb.append(out_lb)
         ub.append(out_ub)
 
-        if i + 1 < nn.numlayer:
+        if nn.numlayer / 2 < i + 1 < nn.numlayer:
+            s = time.clock()
             _, _, out_lb_relu, out_ub_relu = elina_bounds(
                 nn, out_lb_relu, out_ub_relu, start=i + 1)
+            t = time.clock()
+            print(f'ELINA after h{i + 1}: {t - s}')
 
             if verify(out_lb_relu, out_ub_relu, label):
-                print('Verified early :)')
                 return True
+
+    print('Lower out:', out_lb_relu)
+    print('Upper out:', out_ub_relu)
+
+    return verify(out_lb_relu, out_ub_relu, label)
+
+
+def gurobi_earlier_stopping(nn, input_lb, input_ub, label):
+    lb = [input_lb]
+    ub = [input_ub]
+
+    out_lb_first, out_ub_first, out_lb_relu, out_ub_relu = elina_bounds(
+        nn, input_lb, input_ub, finish=1)
+
+    lb.append(out_lb_first[-1])
+    ub.append(out_ub_first[-1])
+
+    for i in range(1, nn.numlayer):
+        create_s = time.clock()
+        m, his = gurobi_create_model(nn, lb, ub)
+        create_t = time.clock()
+        # print(f'Create model h{i + 1}: {create_t - create_s}')
+
+        is_relu = nn.layertypes[i] in ['ReLU']
+
+        if nn.numlayer / 2 < i + 1 < nn.numlayer:
+            pre_s = time.clock()
+            out_lb_all, out_ub_all, out_lb_relu, out_ub_relu = elina_bounds(
+                nn, out_lb_relu, out_ub_relu, start=i, finish=i + 1)
+            pre_t = time.clock()
+            # print(f'Pre ELINA h{i + 1}: {pre_t - pre_s}')
+
+            out_lb = out_lb_all[-1]
+            out_ub = out_ub_all[-1]
+        else:
+            out_lb = np.zeros(len(his))
+            out_ub = np.zeros(len(his))
+            out_lb_relu = np.zeros(len(his))
+            out_ub_relu = np.zeros(len(his))
+
+        weight = np.arange(len(his), dtype='float32')
+        if i + 1 < nn.numlayer:
+            for j in range(len(weight)):
+                weight[j] = np.abs(nn.weights[i + 1][:, j]
+                                   ).sum() * out_ub_relu[j]
+
+        perm = np.argsort(-weight)
+
+        batch_size = 20
+        layer_s = time.clock()
+        for j_batch in batch(perm, n=batch_size):
+            tbo = []
+            for j in j_batch:
+                tbo.append(his[j])
+
+            batch_s = time.clock()
+            if i + 1 == nn.numlayer:
+                perm_lb, perm_ub, perm_lb_relu, perm_ub_relu = gurobi_optimize_last(
+                    m, tbo, is_relu, perm[label])
+            else:
+                perm_lb, perm_ub, perm_lb_relu, perm_ub_relu = gurobi_optimize_bounds(
+                    m, tbo, is_relu)
+            batch_t = time.clock()
+            print(f'Optimize {batch_size} neurons in h{i + 1}: {batch_t - batch_s}')
+
+            for j in range(len(j_batch)):
+                out_lb[j_batch[j]] = perm_lb[j]
+                out_ub[j_batch[j]] = perm_ub[j]
+                out_lb_relu[j_batch[j]] = perm_lb_relu[j]
+                out_ub_relu[j_batch[j]] = perm_ub_relu[j]
+
+            if nn.numlayer / 2 < i + 1 < nn.numlayer:
+                elina_s = time.clock()
+                _, _, early_lb_relu, early_ub_relu = elina_bounds(
+                    nn, out_lb_relu, out_ub_relu, start=i + 1)
+                elina_t = time.clock()
+                # print(f'ELINA at h{i + 1}: {elina_t - elina_s}')
+
+                if verify(early_lb_relu, early_ub_relu, label):
+                    print(f'Verified early :)')
+                    return True
+        layer_t = time.clock()
+        print(f'Optimize h{i + 1}: {layer_t - layer_s}')
+
+        lb.append(out_lb)
+        ub.append(out_ub)
 
     # print('Lower out:', out_lb_relu)
     # print('Upper out:', out_ub_relu)
@@ -448,17 +557,71 @@ def gurobi_early_stopping(nn, input_lb, input_ub, label):
     return verify(out_lb_relu, out_ub_relu, label)
 
 
-def gurobi_incremental_diff(nn, input_lb, input_ub, label):
+def gurobi_4_1024(nn, input_lb, input_ub, label):
     lb = [input_lb]
     ub = [input_ub]
 
-    for i in range(nn.numlayer - 1):
-        out_lb, out_ub = gurobi_bounds(nn, lb, ub)
+    out_lb_first, out_ub_first, out_lb_relu, out_ub_relu = elina_bounds(
+        nn, input_lb, input_ub, finish=1)
+
+    lb.append(out_lb_first[-1])
+    ub.append(out_ub_first[-1])
+
+    for i in range(1, nn.numlayer):
+        s = time.clock()
+        out_lb_all, out_ub_all, out_lb_relu, out_ub_relu = elina_bounds(
+            nn, out_lb_relu, out_ub_relu, start=i, finish=i + 1)
+        t = time.clock()
+        print(f'Pre ELINA h{i + 1}: {t - s}')
+
+        out_lb = out_lb_all[-1]
+        out_ub = out_ub_all[-1]
+
+        if i + 1 not in [3]:
+            s = time.clock()
+            m, his = gurobi_create_model(nn, lb, ub)
+            t = time.clock()
+            # print(f'Create model h{i + 1}: {t - s}')
+
+            is_relu = nn.layertypes[i] in ['ReLU']
+
+            weight = np.arange(len(his), dtype='float')
+            if i + 1 < nn.numlayer:
+                for j in range(len(weight)):
+                    weight[j] = np.abs(nn.weights[i + 1][:, j]
+                                       ).sum() * out_ub_relu[j]
+
+            perm = np.argsort(-weight)
+            if i + 1 == 2:
+                perm = perm[:250]
+
+            tbo = []
+            for j in range(len(perm)):
+                tbo.append(his[perm[j]])
+
+            s = time.clock()
+            if i + 1 == nn.numlayer:
+                perm_lb, perm_ub, perm_lb_relu, perm_ub_relu = gurobi_optimize_last(
+                    m, tbo, is_relu, perm[label])
+            else:
+                perm_lb, perm_ub, perm_lb_relu, perm_ub_relu = gurobi_optimize_bounds(
+                    m, tbo, is_relu)
+            t = time.clock()
+            # print(f'Optimize h{i + 1}: {t - s}')
+
+            for j in range(len(tbo)):
+                out_lb[perm[j]] = perm_lb[j]
+                out_ub[perm[j]] = perm_ub[j]
+                out_lb_relu[perm[j]] = perm_lb_relu[j]
+                out_ub_relu[perm[j]] = perm_ub_relu[j]
 
         lb.append(out_lb)
         ub.append(out_ub)
 
-    return gurobi_diff(nn, lb, ub, label)
+    # print('Lower out:', out_lb_relu)
+    # print('Upper out:', out_ub_relu)
+
+    return verify(out_lb_relu, out_ub_relu, label)
 
 
 if __name__ == '__main__':
@@ -489,26 +652,28 @@ if __name__ == '__main__':
     # Get noisy lower and upper bounds
     lb_noisy, ub_noisy = get_perturbed_image(x0_low, epsilon)
 
-    # # Elina e2e
-    # start = time.time()
-    # verified = elina_e2e(nn, lb_noisy, ub_noisy, predicted_label)
-    # end = time.time()
-    # print(f'ELINA e2e: verified={verified}, time={end-start}')
-
-    # Gurobi incremental diff
-    # start = time.time()
-    # verified = gurobi_incremental_diff(nn, lb_noisy, ub_noisy, predicted_label)
-    # end = time.time()
-    # print(f'Gurobi incremental diff: verified={verified}, time={end-start}')
-
     # Gurobi incremental
     # start = time.time()
     # verified = gurobi_incremental(nn, lb_noisy, ub_noisy, predicted_label)
     # end = time.time()
     # print(f'Gurobi incremental: verified={verified}, time={end-start}')
 
-    # Gurobi incremental partial
-    start = time.time()
-    verified = gurobi_early_stopping(nn, lb_noisy, ub_noisy, predicted_label)
-    end = time.time()
-    print(f'Gurobi early stopping: verified={verified}, time={end-start}')
+    # Gurobi early stopping
+    # start = time.time()
+    # verified = gurobi_early_stopping(nn, lb_noisy, ub_noisy, predicted_label)
+    # end = time.time()
+    # print(f'Gurobi early stopping: verified={verified}, time={end-start}')
+
+    if nn.numlayer != 4:
+        # Gurobi earlier stopping
+        start = time.time()
+        verified = gurobi_earlier_stopping(
+            nn, lb_noisy, ub_noisy, predicted_label)
+        end = time.time()
+        print(f'Gurobi earlier stopping: verified={verified}, time={end-start}')
+    else:
+        # Gurobi 4 1024
+        start = time.time()
+        verified = gurobi_4_1024(nn, lb_noisy, ub_noisy, predicted_label)
+        end = time.time()
+        print(f'Gurobi 4 1024: verified={verified}, time={end-start}')
