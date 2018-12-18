@@ -173,6 +173,7 @@
 \def\sthanks#1{\gdef\thefootnote{\fnsymbol{footnote}}\@@savethanks{#1}}
 
 \def\twoauthors#1#2#3#4{\gdef\@address{}
+   \small
    \gdef\@name{\begin{tabular}{@{}c@{}}
         {\em #1} \\ \\
         #2\relax
@@ -182,13 +183,17 @@
 \end{tabular}}}
 
 \def\@sect#1#2#3#4#5#6[#7]#8{
-   \refstepcounter{#1}\edef\@svsec{\csname the#1\endcsname.\hskip 0.6em}
-       \begingroup \ifnum #2=1\bf\centering
+   \refstepcounter{#1}\edef\@svsec{\csname the#1\endcsname.\hskip 0.7em}
+       \begingroup 
+       \ifnum #2=1\bf\centering
           {\interlinepenalty \@M
-             \@svsec\uppercase{#8}\par}\else\ifnum #2=2\bf
-          \noindent{\interlinepenalty \@M \@svsec #8\par}\else\it
+             \@svsec\uppercase{#8}\par}
+       \else\ifnum #2=2\bf
+          \noindent{\interlinepenalty \@M \@svsec #8\par}
+       \else\it
           \noindent{\interlinepenalty \@M
-             \@svsec #8\par}\fi\fi\endgroup
+             \@svsec #8\par}
+       \fi\fi\endgroup
        \csname #1mark\endcsname{#7}\addcontentsline
          {toc}{#1}{\protect\numberline{\csname the#1\endcsname} #7}
      \@tempskipa #5\relax
