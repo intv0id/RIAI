@@ -527,7 +527,7 @@ def gurobi_earlier_stopping(nn, input_lb, input_ub, label):
                 perm_lb, perm_ub, perm_lb_relu, perm_ub_relu = gurobi_optimize_bounds(
                     m, tbo, is_relu)
             batch_t = time.clock()
-            print(f'Optimize {batch_size} neurons in h{i + 1}: {batch_t - batch_s}')
+            # print(f'Optimize {batch_size} neurons in h{i + 1}: {batch_t - batch_s}')
 
             for j in range(len(j_batch)):
                 out_lb[j_batch[j]] = perm_lb[j]
@@ -572,7 +572,7 @@ def gurobi_4_1024(nn, input_lb, input_ub, label):
         out_lb_all, out_ub_all, out_lb_relu, out_ub_relu = elina_bounds(
             nn, out_lb_relu, out_ub_relu, start=i, finish=i + 1)
         t = time.clock()
-        print(f'Pre ELINA h{i + 1}: {t - s}')
+        # print(f'Pre ELINA h{i + 1}: {t - s}')
 
         out_lb = out_lb_all[-1]
         out_ub = out_ub_all[-1]
@@ -593,7 +593,7 @@ def gurobi_4_1024(nn, input_lb, input_ub, label):
 
             perm = np.argsort(-weight)
             if i + 1 == 2:
-                perm = perm[:250]
+                perm = perm[:300]
 
             tbo = []
             for j in range(len(perm)):
