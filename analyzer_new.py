@@ -601,10 +601,11 @@ if __name__ == '__main__':
         verified = gurobi_earlier_stopping(
             nn, lb_noisy, ub_noisy, predicted_label)
         end = time.time()
-        print(f'verified={verified}, time={end-start}')
     else:
         # Gurobi 4 1024
         start = time.time()
         verified = gurobi_4_1024(nn, lb_noisy, ub_noisy, predicted_label)
         end = time.time()
-        print(f'verified={verified}, time={end-start}')
+
+    print(f'{"" if verified else "can not be "}verified')
+    print("analysis time: ", (end-start), " seconds")
