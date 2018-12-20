@@ -1,15 +1,15 @@
-#!/usr/bin/env python
+#! /usr/bin/env python3
 # coding: utf-8
 
-
 import sys
+from sys import argv
 sys.path.insert(0, '../ELINA/python_interface/')
 
 
 import numpy as np
 import re
 import csv
-
+import pdb
 from elina_box import *
 from elina_interval import *
 from elina_abstract0 import *
@@ -19,17 +19,13 @@ from elina_scalar import *
 from elina_interval import *
 from elina_linexpr0 import *
 from elina_lincons0 import *
-
-from sys import argv
 import ctypes
 from ctypes.util import find_library
 from gurobipy import *
 import time
-sys.path.insert(0, "../ELINA/python_interface/")
 
-
-libc = CDLL(find_library("c"))
-cstdout = c_void_p.in_dll(libc, "stdout")
+libc = CDLL(find_library('c'))
+cstdout = c_void_p.in_dll(libc, 'stdout')
 
 
 class layers:
@@ -41,22 +37,30 @@ class layers:
         self.ffn_counter = 0
 
 
+def batch(iterable, n=1):
+    l = len(iterable)
+    for ndx in range(0, l, n):
+        yield iterable[ndx:min(ndx + n, l)]
+
+
 def parse_bias(text):
-    if len(text) < 1 or text[0] != "[":
+    if len(text) < 1 or text[0] != '[':
         raise Exception("expected '['")
-    if text[-1] != "]":
+    if text[-1] != ']':
         raise Exception("expected ']'")
-    v = np.array([*map(lambda x: np.double(x.strip()), text[1:-1].split(","))])
+    v = np.array([*map(lambda x: np.double(x.strip()), text[1:-1].split(','))])
+    # return v.reshape((v.size,1))
     return v
 
 
 def parse_vector(text):
-    if len(text) < 1 or text[0] != "[":
+    if len(text) < 1 or text[0] != '[':
         raise Exception("expected '['")
-    if text[-1] != "]":
+    if text[-1] != ']':
         raise Exception("expected ']'")
-    v = np.array([*map(lambda x: np.double(x.strip()), text[1:-1].split(","))])
+    v = np.array([*map(lambda x: np.double(x.strip()), text[1:-1].split(','))])
     return v.reshape((v.size, 1))
+    # return v
 
 
 def balanced_split(text):
@@ -65,13 +69,13 @@ def balanced_split(text):
     start = 0
     result = []
     while i < len(text):
-        if text[i] == "[":
+        if text[i] == '[':
             bal += 1
-        elif text[i] == "]":
+        elif text[i] == ']':
             bal -= 1
-        elif text[i] == "," and bal == 0:
+        elif text[i] == ',' and bal == 0:
             result.append(text[start:i])
-            start = i + 1
+            start = i+1
         i += 1
     if start < i:
         result.append(text[start:i])
@@ -80,60 +84,59 @@ def balanced_split(text):
 
 def parse_matrix(text):
     i = 0
-    if len(text) < 1 or text[0] != "[":
+    if len(text) < 1 or text[0] != '[':
         raise Exception("expected '['")
-    if text[-1] != "]":
+    if text[-1] != ']':
         raise Exception("expected ']'")
-    return np.array(
-        [*map(lambda x: parse_vector(x.strip()).flatten(), balanced_split(text[1:-1]))]
-    )
+    return np.array([*map(lambda x: parse_vector(x.strip()).flatten(), balanced_split(text[1:-1]))])
 
 
 def parse_net(text):
-    lines = [*filter(lambda x: len(x) != 0, text.split("\n"))]
+    lines = [*filter(lambda x: len(x) != 0, text.split('\n'))]
     i = 0
     res = layers()
     while i < len(lines):
-        if lines[i] in ["ReLU", "Affine"]:
-            W = parse_matrix(lines[i + 1])
-            b = parse_bias(lines[i + 2])
+        if lines[i] in ['ReLU', 'Affine']:
+            W = parse_matrix(lines[i+1])
+            b = parse_bias(lines[i+2])
             res.layertypes.append(lines[i])
             res.weights.append(W)
             res.biases.append(b)
             res.numlayer += 1
             i += 3
         else:
-            raise Exception("parse error: " + lines[i])
+            raise Exception('parse error: '+lines[i])
     return res
 
 
 def parse_spec(text):
     text = text.replace("[", "")
     text = text.replace("]", "")
-    with open("dummy", "w") as my_file:
+    with open('dummy', 'w') as my_file:
         my_file.write(text)
-    data = np.genfromtxt("dummy", delimiter=",", dtype=np.double)
+    data = np.genfromtxt('dummy', delimiter=',', dtype=np.double)
     low = np.copy(data[:, 0])
     high = np.copy(data[:, 1])
     return low, high
 
 
 def get_perturbed_image(x, epsilon):
-    image = x[1 : len(x)]
+    image = x[1:len(x)]
     num_pixels = len(image)
     LB_N0 = image - epsilon
     UB_N0 = image + epsilon
 
     for i in range(num_pixels):
-        if LB_N0[i] < 0:
+        if(LB_N0[i] < 0):
             LB_N0[i] = 0
-        if UB_N0[i] > 1:
+        if(UB_N0[i] > 1):
             UB_N0[i] = 1
     return LB_N0, UB_N0
 
 
 def generate_linexpr0(weights, bias, size):
-    linexpr0 = elina_linexpr0_alloc(ElinaLinexprDiscr.ELINA_LINEXPR_DENSE, size)
+    linexpr0 = elina_linexpr0_alloc(
+        ElinaLinexprDiscr.ELINA_LINEXPR_DENSE, size)
     cst = pointer(linexpr0.contents.cst)
     elina_scalar_set_double(cst.contents.val.scalar, bias)
     for i in range(size):
@@ -141,405 +144,468 @@ def generate_linexpr0(weights, bias, size):
     return linexpr0
 
 
-class ElinaToolbox:
-    @staticmethod
-    def hypercubeToNumpy(man, HC, nb_elts):
-        """Return inf and sup bounds"""
-        bounds = elina_abstract0_to_box(man, HC)
-        return (
-            [elt.contents.inf.contents.val.dbl for elt in bounds[:nb_elts]],
-            [elt.contents.sup.contents.val.dbl for elt in bounds[:nb_elts]],
-        )
+def elina_bounds(nn, LB_N0, UB_N0, start=0, finish=None):
+    start_size = len(LB_N0)
+    numlayer = finish if finish != None else nn.numlayer
 
-    @staticmethod
-    def NumpyToHypercube(man, LB, UB):
-        num_pixels = len(LB)
-        itv = elina_interval_array_alloc(num_pixels)
-        for i in range(num_pixels):
-            elina_interval_set_double(itv[i], LB[i], UB[i])
-        HC = elina_abstract0_of_box(man, 0, num_pixels, itv)
-        elina_interval_array_free(itv, num_pixels)
-        return HC
+    hi_lower_bounds = []
+    hi_upper_bounds = []
 
+    man = elina_box_manager_alloc()
+    itv = elina_interval_array_alloc(start_size)
+    for i in range(start_size):
+        elina_interval_set_double(itv[i], LB_N0[i], UB_N0[i])
 
-class SolverLayer:
-    SUPPORTED_LT = ["ReLU", "Affine"]
+    # construct input abstraction
+    element = elina_abstract0_of_box(man, 0, start_size, itv)
+    elina_interval_array_free(itv, start_size)
+    for layerno in range(start, numlayer):
+        if(nn.layertypes[layerno] in ['ReLU', 'Affine']):
+            weights = nn.weights[layerno]
+            biases = nn.biases[layerno]
+            dims = elina_abstract0_dimension(man, element)
+            num_in_pixels = dims.intdim + dims.realdim
+            num_out_pixels = len(weights)
 
-    def __init__(self, layertypes, weights, biases):
-        for layertype in layertypes:
-            assert layertype in self.SUPPORTED_LT, "Net type not supported"
-        self.layertypes = layertypes
-        self.weights = weights
-        self.biases = biases
+            dimadd = elina_dimchange_alloc(0, num_out_pixels)
+            for i in range(num_out_pixels):
+                dimadd.contents.dim[i] = num_in_pixels
+            elina_abstract0_add_dimensions(man, True, element, dimadd, False)
+            elina_dimchange_free(dimadd)
+            np.ascontiguousarray(weights, dtype=np.double)
+            np.ascontiguousarray(biases, dtype=np.double)
+            var = num_in_pixels
 
+            # handle affine layer
+            for i in range(num_out_pixels):
+                tdim = ElinaDim(var)
+                linexpr0 = generate_linexpr0(
+                    weights[i], biases[i], num_in_pixels)
+                element = elina_abstract0_assign_linexpr_array(
+                    man, True, element, tdim, linexpr0, 1, None)
+                var += 1
+            dimrem = elina_dimchange_alloc(0, num_in_pixels)
+            for i in range(num_in_pixels):
+                dimrem.contents.dim[i] = i
+            elina_abstract0_remove_dimensions(man, True, element, dimrem)
+            elina_dimchange_free(dimrem)
 
-class ElinaLayers(SolverLayer):
-    def __init__(self, layertypes, weights, biases, man):
-        super().__init__(layertypes, weights, biases)
-        self.total_layers = len(weights)
-        self.man = man
-        self.HC = None
+            # get bounds for each neuron
+            bounds = elina_abstract0_to_box(man, element)
 
-    def __del__(self):
-        elina_abstract0_free(self.man, self.HC)
+            layer_lower_bounds = np.zeros(num_out_pixels)
+            layer_upper_bounds = np.zeros(num_out_pixels)
 
-    def compute(self, LB, UB, input_layerno=None, output_layerno=None):
-        """
-            Return the output values range for i=input_layerno + 1 to i = output_layerno + 1
-        """
-        self.HC = ElinaToolbox.NumpyToHypercube(self.man, LB, UB)
-        lower_bounds = [0.0 for _ in range(self.total_layers)]
-        upper_bounds = [0.0 for _ in range(self.total_layers)]
-        for layerno in range(self.total_layers):
-            layerdim = len(self.biases[layerno])
-            self.propagate_hypercube(layerno)
-            LB_layerno, UB_layerno = ElinaToolbox.hypercubeToNumpy(
-                self.man, self.HC, layerdim
-            )
-            lower_bounds[layerno], upper_bounds[layerno] = LB_layerno, UB_layerno
-            if self.layertypes[layerno] == "ReLU":
-                self.compute_relu()
+            for i in range(num_out_pixels):
+                layer_lower_bounds[i] = bounds[i].contents.inf.contents.val.dbl
+                layer_upper_bounds[i] = bounds[i].contents.sup.contents.val.dbl
 
-        return lower_bounds, upper_bounds
+            hi_lower_bounds.append(layer_lower_bounds)
+            hi_upper_bounds.append(layer_upper_bounds)
 
-    def propagate_hypercube(self, layer_no):
-        weights, biases = self.weights[layer_no], self.biases[layer_no]
-        np.ascontiguousarray(weights, dtype=np.double)
-        np.ascontiguousarray(biases, dtype=np.double)
+            elina_interval_array_free(bounds, num_out_pixels)
 
-        dims = elina_abstract0_dimension(self.man, self.HC)
-
-        self.num_in_pixels = dims.intdim + dims.realdim
-        self.num_out_pixels = len(weights)
-
-        self.add_output_dim()
-        self.compute_affine(weights, biases)
-        self.remove_input_dim()
-
-    def add_output_dim(self):
-        dimadd = elina_dimchange_alloc(0, self.num_out_pixels)
-        for i in range(self.num_out_pixels):
-            dimadd.contents.dim[i] = self.num_in_pixels
-        elina_abstract0_add_dimensions(self.man, True, self.HC, dimadd, False)
-        elina_dimchange_free(dimadd)
-
-    def remove_input_dim(self):
-        dimrem = elina_dimchange_alloc(0, self.num_in_pixels)
-        for i in range(self.num_in_pixels):
-            dimrem.contents.dim[i] = i
-        elina_abstract0_remove_dimensions(self.man, True, self.HC, dimrem)
-        elina_dimchange_free(dimrem)
-
-    def compute_affine(self, weights, biases):
-        for i in range(self.num_out_pixels):
-            self.HC = elina_abstract0_assign_linexpr_array(
-                man=self.man,
-                destructive=True,
-                org=self.HC,
-                tdim=ElinaDim(self.num_in_pixels + i),
-                linexpr_array=generate_linexpr0(
-                    weights[i], biases[i], self.num_in_pixels
-                ),
-                size=1,
-                dest=None,
-            )
-
-    def compute_relu(self):
-        self.HC = relu_box_layerwise(
-            man=self.man,
-            destructive=True,
-            elem=self.HC,
-            start_offset=0,
-            num_dim=self.num_out_pixels,
-        )
-
-
-class GurobiLayers(SolverLayer):
-    def __init__(self, layertypes, weights, biases, lower_bounds, upper_bounds):
-        super().__init__(layertypes, weights, biases)
-        self.m = Model(name="NN")
-        self.m.setParam("OutputFlag", False)
-        self.dim = [len(elt) for _, elt in enumerate(biases)]
-        self.lower_bounds, self.upper_bounds = lower_bounds, upper_bounds
-
-        self.define_variables()
-        self.add_relu_constraints()
-        self.add_hidden_layer_constraints()
-
-    def define_variables(self):
-        self.his = [
-            [
-                (
-                    self.m.addVar(
-                        lb=self.lower_bounds[i][j],
-                        ub=self.upper_bounds[i][j],
-                        vtype=GRB.CONTINUOUS,
-                        name=f"Hidden_{i}_{j}",
-                    )
-                    if i == 0
-                    else self.m.addVar(
-                        lb=-np.inf, vtype=GRB.CONTINUOUS, name=f"Hidden_{i}_{j}"
-                    )
-                )
-                for j in range(self.dim[i])
-            ]
-            for i in range(len(self.dim))
-        ]
-
-        self.ris = [
-            [
-                self.m.addVar(lb=-np.inf, vtype=GRB.CONTINUOUS, name=f"ReLU_{i}_{j}")
-                for j in range(self.dim[i])
-            ]
-            for i in range(len(self.dim))
-        ]
-
-        self.m.update()
-
-    def add_relu_constraints(self):
-        for i in range(len(self.dim)):
-            if self.layertypes[i] == "ReLU":
-                for j in range(self.dim[i]):
-                    inf, sup = self.lower_bounds[i][j], self.upper_bounds[i][j]
-                    assert inf <= sup
-                    if inf >= 0:
-                        self.m.addConstr(self.ris[i][j] == self.his[i][j])
-                    elif sup <= 0:
-                        self.m.addConstr(self.ris[i][j] == 0)
-                    else:
-                        k, t = sup / (sup - inf), -sup * inf / (sup - inf)
-
-                        self.m.addConstr(self.ris[i][j] >= 0)
-                        self.m.addConstr(self.ris[i][j] >= self.his[i][j])
-                        self.m.addConstr(self.ris[i][j] <= k * self.his[i][j] + t)
-            else:
-                for j in range(self.dim[i]):
-                    self.m.addConstr(self.ris[i][j] == self.his[i][j])
-
-        self.m.update()
-
-    def add_hidden_layer_constraints(self):
-        for i in range(1, len(self.dim)):
-            for j in range(self.dim[i]):
-                self.m.addConstr(
-                    self.his[i][j]
-                    == LinExpr(self.weights[i][j, :], self.ris[i - 1])
-                    + self.biases[i][j]
-                )
-
-        self.m.update()
-
-    def optimize_one(self, value, minimize=True, write=False):
-        self.m.reset()
-        self.m.setObjective(value, GRB.MINIMIZE if minimize else GRB.MAXIMIZE)
-        if write:
-            self.m.write(f"models/model_{value}_min={minimize}.lp")
-        self.m.optimize()
-        try:
-            return self.m.objVal
-        except:
-            print(
-                "Can't find {bound} bound for value {value}".format(
-                    bound="lower" if minimize else "upper", j=j
-                )
-            )
-            return None
-
-    def verify_out(self, true_label, write=False):
-        mf = self.m.addVar(lb=-np.inf, vtype=GRB.CONTINUOUS, name="Maxi_false")
-        mt = self.m.addVar(lb=-np.inf, vtype=GRB.CONTINUOUS, name="Mini_true")
-
-        self.m.addConstr(
-            mt
-            == (
-                max_(self.his[-1][true_label], 0)
-                if self.layertypes[-1] == "ReLU"
-                else self.his[-1][true_label]
-            )
-        )
-
-        self.m.addConstr(
-            mf
-            == (
-                max_(self.his[-1][:true_label] + self.his[-1][true_label + 1 :], 0)
-                if self.layertypes[-1] == "ReLU"
-                else max_(self.his[-1][:true_label] + self.his[-1][true_label + 1 :])
-            )
-        )
-
-        diff = self.optimize_one(value=mt - mf, minimize=True, write=write)
-
-        try:
-            return diff > 0
-        except:
-            print("Can't optimize output difference")
-            return None
-
-    def compute(self, write=False, out=False, true_label=None):
-        if out:
-            assert true_label is not None, "Need the true label"
-            return true_label, self.verify_out(true_label=true_label, write=write)
+            # handle ReLU layer
+            if(nn.layertypes[layerno] == 'ReLU'):
+                element = relu_box_layerwise(
+                    man, True, element, 0, num_out_pixels)
         else:
-            return (
-                [
-                    self.optimize_one(value=self.his[-1][j], minimize=True, write=write)
-                    for j in range(self.dim[-1])
-                ],
-                [
-                    self.optimize_one(
-                        value=self.his[-1][j], minimize=False, write=write
-                    )
-                    for j in range(self.dim[-1])
-                ],
-            )
+            print(' net type not supported')
+
+    out_lower_bounds = np.zeros(num_out_pixels)
+    out_upper_bounds = np.zeros(num_out_pixels)
+
+    bounds = elina_abstract0_to_box(man, element)
+
+    for i in range(num_out_pixels):
+        out_lower_bounds[i] = bounds[i].contents.inf.contents.val.dbl
+        out_upper_bounds[i] = bounds[i].contents.sup.contents.val.dbl
+
+    elina_interval_array_free(bounds, num_out_pixels)
+
+    elina_abstract0_free(man, element)
+    elina_manager_free(man)
+
+    return hi_lower_bounds, hi_upper_bounds, out_lower_bounds, out_upper_bounds
 
 
-class Pipeline:
-    def __init__(self, netname, specname, epsilon):
-        self.man = elina_box_manager_alloc()
-        nn, self.LB_N0, self.UB_N0 = Pipeline.open_files(
-            netname, specname, epsilon, self.man
-        )
-        self.layertypes, self.weights, self.biases = (
-            nn.layertypes,
-            nn.weights,
-            nn.biases,
-        )
-        self.true_label = Pipeline.get_true_label(netname, specname, self.man)
-        self.nb_layers = len(self.biases)
+def gurobi_create_model(nn, lb, ub):
+    m = Model(name='NN')
+    m.setParam('OutputFlag', False)
+    m.setParam('Threads', 1)
 
-    @staticmethod
-    def open_files(netname, specname, epsilon, man):
-        with open(netname, "r") as netfile:
-            netstring = netfile.read()
-        with open(specname, "r") as specfile:
-            specstring = specfile.read()
+    ris = []
+    # Start with the input layer bounds
+    for i in range(len(lb[0])):
+        ri = m.addVar(lb=lb[0][i], ub=ub[0][i],
+                      vtype=GRB.CONTINUOUS, name='i_' + str(i))
+        ris.append(ri)
 
-        nn = parse_net(netstring)
-        x0_low, x0_high = parse_spec(specstring)
-        LB_N0, UB_N0 = get_perturbed_image(x0_low, epsilon)
+    for i in range(1, len(lb)):
+        his = []
+        # Add the next layer constraints using (weights, biases, previous layer (ReLU | Affine))
+        for j in range(len(lb[i])):
+            hi = m.addVar(
+                lb=lb[i][j], ub=ub[i][j], vtype=GRB.CONTINUOUS, name='h_' + str(i) + '_' + str(j))
+            m.addConstr(hi == LinExpr(
+                nn.weights[i - 1][j, :], ris) + nn.biases[i - 1][j])
+            his.append(hi)
 
-        return nn, LB_N0, UB_N0
+        # Add the ReLU approximation if required
+        if nn.layertypes[i - 1] in ['ReLU']:
+            ris = []
 
-    @staticmethod
-    def get_true_label(netname, specname, man):
-        nn, LB_N0, UB_N0 = Pipeline.open_files(netname, specname, 0, man)
-        return np.argmax(
-            ElinaLayers(nn.layertypes, nn.weights, nn.biases, man).compute(
-                LB_N0, UB_N0
-            )[1][-1]
-        )
+            for j in range(len(lb[i])):
+                inf = lb[i][j]
+                sup = ub[i][j]
 
-    def compute(self):
-        pass
+                ri = m.addVar(lb=0, vtype=GRB.CONTINUOUS,
+                              name='r_' + str(i) + '_' + str(j))
 
-    def __del__(self):
-        elina_manager_free(self.man)
+                if inf >= 0:
+                    m.addConstr(ri == his[j])
+                elif sup <= 0:
+                    m.addConstr(ri == 0)
+                else:
+                    k, t = sup / (sup - inf), -sup * inf / (sup - inf)
+
+                    m.addConstr(ri >= his[j])
+                    m.addConstr(ri <= k * his[j] + t)
+
+                ris.append(ri)
+        else:
+            ris = his
+
+    his = []
+    last_index = len(lb) - 1
+    # Write the constraints for the layer we are trying to predict
+    for i in range(len(nn.biases[last_index])):
+        hi = m.addVar(lb=-np.inf, vtype=GRB.CONTINUOUS, name='o_' + str(i))
+        m.addConstr(hi == LinExpr(
+            nn.weights[last_index][i, :], ris) + nn.biases[last_index][i])
+        his.append(hi)
+
+    return m, his
 
 
-class Strategy1(Pipeline):
-    """Processing all at once"""
+def gurobi_optimize_bounds(m, his, is_relu):
+    out_lb = np.zeros(len(his))
+    out_ub = np.zeros(len(his))
 
-    def compute(self):
-        lb, ub = ElinaLayers(
-            self.layertypes, self.weights, self.biases, self.man
-        ).compute(self.LB_N0, self.UB_N0)
-        gl = GurobiLayers(self.layertypes, self.weights, self.biases, lb, ub)
-        label, verified = gl.compute(write=False, out=True, true_label=self.true_label)
-        return label, verified
+    for i in range(len(his)):
+        # s = time.clock()
+        m.setObjective(his[i], GRB.MINIMIZE)
+        m.optimize()
+        try:
+            out_lb[i] = m.objVal
+        except:
+            print(f"Can't find lower bound for neuron {i}")
+            sys.exit(1)
+
+        m.setObjective(his[i], GRB.MAXIMIZE)
+        m.optimize()
+        try:
+            out_ub[i] = m.objVal
+        except:
+            print(f"Can't find upper bound for neuron {i}")
+            sys.exit(1)
+        # t = time.clock()
+        # print(f'Optimize neuron {i}: {t - s}')
+
+    out_lb_relu = np.copy(out_lb)
+    out_ub_relu = np.copy(out_ub)
+
+    # Apply box relu for the output
+    if is_relu:
+        for i in range(len(his)):
+            out_lb_relu[i] = max(out_lb[i], 0)
+            out_ub_relu[i] = max(out_ub[i], 0)
+
+    return out_lb, out_ub, out_lb_relu, out_ub_relu
 
 
-class Strategy2(Pipeline):
-    """ Processing `step` layers per `step` layers"""
+def gurobi_optimize_last(m, his, is_relu, label):
+    out_lb = np.zeros(len(his))
+    out_ub = np.zeros(len(his))
 
-    step = 3
+    for i in range(len(his)):
+        # s = time.clock()
+        if i == label:
+            m.setObjective(his[i], GRB.MINIMIZE)
+            m.optimize()
+            try:
+                out_lb[i] = m.objVal
+            except:
+                print(f"Can't find lower bound for neuron {i}")
+                sys.exit(1)
+        else:
+            m.setObjective(his[i], GRB.MAXIMIZE)
+            m.optimize()
+            try:
+                out_ub[i] = m.objVal
+            except:
+                print(f"Can't find upper bound for neuron {i}")
+                sys.exit(1)
+        # t = time.clock()
+        # print(f'Optimize o{i}: {t - s}')
 
-    def compute(self):
-        lb0, ub0 = self.LB_N0, self.UB_N0
+    out_lb_relu = np.copy(out_lb)
+    out_ub_relu = np.copy(out_ub)
 
-        for i in range(0, self.nb_layers, self.step):
-            j = min(i + self.step, self.nb_layers)
+    # Apply box relu for the output
+    if is_relu:
+        for i in range(len(his)):
+            out_lb_relu[i] = max(out_lb[i], 0)
+            out_ub_relu[i] = max(out_ub[i], 0)
 
-            lb, ub = ElinaLayers(
-                self.layertypes[i:j], self.weights[i:j], self.biases[i:j], self.man
-            ).compute(lb0, ub0)
-            gl = GurobiLayers(
-                self.layertypes[i:j], self.weights[i:j], self.biases[i:j], lb, ub
-            )
+    return out_lb, out_ub, out_lb_relu, out_ub_relu
 
-            if j < self.nb_layers:
-                lb0, ub0 = gl.compute(write=False, out=False)
+
+def gurobi_bounds(nn, lb, ub, label):
+    m, his = gurobi_create_model(nn, lb, ub)
+    is_relu = nn.layertypes[len(lb) - 1] in ['ReLU']
+    if len(lb) == nn.numlayer:
+        return gurobi_optimize_last(m, his, is_relu, label)
+    else:
+        return gurobi_optimize_bounds(m, his, is_relu)
+
+
+def predict_label(lb, ub):
+    nr_labels = len(lb)
+    predicted_label = 0
+
+    for i in range(nr_labels):
+        flag = True
+        for j in range(nr_labels):
+            if(j != i):
+                if(lb[i] <= ub[j]):
+                    flag = False
+                    break
+
+        if(flag):
+            predicted_label = i
+            break
+
+    return predicted_label
+
+
+def verify(lb, ub, label):
+    nr_labels = len(lb)
+    verified = True
+
+    for j in range(nr_labels):
+        if(j != label):
+            if(lb[label] <= ub[j]):
+                verified = False
+                break
+
+    return verified
+
+
+def classify(nn, img):
+    lb, ub = get_perturbed_image(img, 0)
+    _, _, out_lb, out_ub = elina_bounds(nn, lb, ub)
+    predicted_label = predict_label(out_lb, out_ub)
+
+    if(predicted_label != int(img[0])):
+        print('Image not correctly classified by the network')
+        print('Expected label:', int(img[0]))
+        print('Classified label:', predicted_label)
+        sys.exit(1)
+    else:
+        print('Classified label:', predicted_label)
+
+    return predicted_label
+
+
+def gurobi_earlier_stopping(nn, input_lb, input_ub, label):
+    lb = [input_lb]
+    ub = [input_ub]
+
+    out_lb_first, out_ub_first, out_lb_relu, out_ub_relu = elina_bounds(
+        nn, input_lb, input_ub, finish=1)
+
+    lb.append(out_lb_first[-1])
+    ub.append(out_ub_first[-1])
+
+    for i in range(1, nn.numlayer):
+        # create_s = time.clock()
+        m, his = gurobi_create_model(nn, lb, ub)
+        # create_t = time.clock()
+        # print(f'Create model h{i + 1}: {create_t - create_s}')
+
+        is_relu = nn.layertypes[i] in ['ReLU']
+
+        if nn.numlayer / 2 < i + 1 < nn.numlayer:
+            # pre_s = time.clock()
+            out_lb_all, out_ub_all, out_lb_relu, out_ub_relu = elina_bounds(
+                nn, out_lb_relu, out_ub_relu, start=i, finish=i + 1)
+            # pre_t = time.clock()
+            # print(f'Pre ELINA h{i + 1}: {pre_t - pre_s}')
+
+            out_lb = out_lb_all[-1]
+            out_ub = out_ub_all[-1]
+        else:
+            out_lb = np.zeros(len(his))
+            out_ub = np.zeros(len(his))
+            out_lb_relu = np.zeros(len(his))
+            out_ub_relu = np.zeros(len(his))
+
+        weight = np.arange(len(his), dtype='float32')
+        if i + 1 < nn.numlayer:
+            for j in range(len(weight)):
+                weight[j] = np.abs(nn.weights[i + 1][:, j]
+                                   ).sum() * out_ub_relu[j]
+
+        perm = np.argsort(-weight)
+
+        batch_size = 20
+        layer_s = time.clock()
+        for j_batch in batch(perm, n=batch_size):
+            tbo = []
+            for j in j_batch:
+                tbo.append(his[j])
+
+            # batch_s = time.clock()
+            if i + 1 == nn.numlayer:
+                perm_lb, perm_ub, perm_lb_relu, perm_ub_relu = gurobi_optimize_last(
+                    m, tbo, is_relu, j_batch[label])
             else:
-                return gl.compute(write=False, out=True, true_label=self.true_label)
+                perm_lb, perm_ub, perm_lb_relu, perm_ub_relu = gurobi_optimize_bounds(
+                    m, tbo, is_relu)
+            # batch_t = time.clock()
+            # print(f'Optimize {batch_size} neurons in h{i + 1}: {batch_t - batch_s}')
+
+            for j in range(len(j_batch)):
+                out_lb[j_batch[j]] = perm_lb[j]
+                out_ub[j_batch[j]] = perm_ub[j]
+                out_lb_relu[j_batch[j]] = perm_lb_relu[j]
+                out_ub_relu[j_batch[j]] = perm_ub_relu[j]
+
+            if nn.numlayer / 2 < i + 1 < nn.numlayer:
+                # elina_s = time.clock()
+                _, _, early_lb_relu, early_ub_relu = elina_bounds(
+                    nn, out_lb_relu, out_ub_relu, start=i + 1)
+                # elina_t = time.clock()
+                # print(f'ELINA at h{i + 1}: {elina_t - elina_s}')
+
+                if verify(early_lb_relu, early_ub_relu, label):
+                    # print(f'Verified early :)')
+                    return True
+        # layer_t = time.clock()
+        # print(f'Optimize h{i + 1}: {layer_t - layer_s}')
+
+        lb.append(out_lb)
+        ub.append(out_ub)
+
+    # print('Lower out:', out_lb_relu)
+    # print('Upper out:', out_ub_relu)
+
+    return verify(out_lb_relu, out_ub_relu, label)
 
 
-class Strategy3(Pipeline):
-    """Processing neurons 1024 at a time"""
+def gurobi_4_1024(nn, input_lb, input_ub, label):
+    lb = [input_lb]
+    ub = [input_ub]
 
-    neuron_steps = 1024
+    out_lb_first, out_ub_first, out_lb_relu, out_ub_relu = elina_bounds(
+        nn, input_lb, input_ub, finish=1)
 
-    def indexes(self):
-        idx = [0]
-        counter = 0
-        for i, l in enumerate(map(len, self.biases)):
-            if counter >= self.neuron_steps:
-                idx.append(i)
-                counter = 0
-            counter += l
-        idx.append(self.nb_layers)
-        return idx
+    lb.append(out_lb_first[-1])
+    ub.append(out_ub_first[-1])
 
-    def compute(self):
-        lb0, ub0 = self.LB_N0, self.UB_N0
-        idx = self.indexes()
+    for i in range(1, nn.numlayer):
+        # s = time.clock()
+        out_lb_all, out_ub_all, out_lb_relu, out_ub_relu = elina_bounds(
+            nn, out_lb_relu, out_ub_relu, start=i, finish=i + 1)
+        # t = time.clock()
+        # print(f'Pre ELINA h{i + 1}: {t - s}')
 
-        for k in range(len(idx) - 1):
-            [i, j] = idx[k : k + 2]
-            lb, ub = ElinaLayers(
-                self.layertypes[i:j], self.weights[i:j], self.biases[i:j], self.man
-            ).compute(lb0, ub0)
-            gl = GurobiLayers(
-                self.layertypes[i:j], self.weights[i:j], self.biases[i:j], lb, ub
-            )
+        out_lb = out_lb_all[-1]
+        out_ub = out_ub_all[-1]
 
-            if j < self.nb_layers:
-                lb0, ub0 = gl.compute(write=False, out=False)
+        if i + 1 not in [3]:
+            s = time.clock()
+            m, his = gurobi_create_model(nn, lb, ub)
+            t = time.clock()
+            # print(f'Create model h{i + 1}: {t - s}')
+
+            is_relu = nn.layertypes[i] in ['ReLU']
+
+            weight = np.arange(len(his), dtype='float')
+            if i + 1 < nn.numlayer:
+                for j in range(len(weight)):
+                    weight[j] = np.abs(nn.weights[i + 1][:, j]
+                                       ).sum() * out_ub_relu[j]
+
+            perm = np.argsort(-weight)
+            if i + 1 == 2:
+                perm = perm[:300]
+
+            tbo = []
+            for j in range(len(perm)):
+                tbo.append(his[perm[j]])
+
+            # s = time.clock()
+            if i + 1 == nn.numlayer:
+                perm_lb, perm_ub, perm_lb_relu, perm_ub_relu = gurobi_optimize_last(
+                    m, tbo, is_relu, perm[label])
             else:
-                return gl.compute(write=False, out=True, true_label=self.true_label)
+                perm_lb, perm_ub, perm_lb_relu, perm_ub_relu = gurobi_optimize_bounds(
+                    m, tbo, is_relu)
+            # t = time.clock()
+            # print(f'Optimize h{i + 1}: {t - s}')
+
+            for j in range(len(tbo)):
+                out_lb[perm[j]] = perm_lb[j]
+                out_ub[perm[j]] = perm_ub[j]
+                out_lb_relu[perm[j]] = perm_lb_relu[j]
+                out_ub_relu[perm[j]] = perm_ub_relu[j]
+
+        lb.append(out_lb)
+        ub.append(out_ub)
+
+    # print('Lower out:', out_lb_relu)
+    # print('Upper out:', out_ub_relu)
+
+    return verify(out_lb_relu, out_ub_relu, label)
 
 
-def test_strat(strategies, netname, specname, epsilon):
-    for s in strategies:
-        analyzer = s(netname, specname, epsilon)
-
-        start = time.time()
-        pred_label, res = analyzer.compute()
-        end = time.time()
-
-        del analyzer
-
-        print(f"Strategy <{s.__name__}>")
-        print("{neg}verified".format(neg="" if res else "can not be "))
-        print("analysis time: ", (end - start), " seconds")
-        print("\n")
-
-
-def main():
-    if len(argv) not in range(3, 5):
-        print("usage: python3.6 " + argv[0] + " net.txt spec.txt [timeout]")
-        exit(1)
+if __name__ == '__main__':
+    if len(argv) < 3 or len(argv) > 4:
+        print('usage: python3.6 ' + argv[0] + ' net.txt spec.txt [timeout]')
+        sys.exit(1)
 
     netname = argv[1]
     specname = argv[2]
     epsilon = float(argv[3])
 
-    test_strat(
-        strategies=[Strategy3],
-        netname=netname,
-        specname=specname,
-        epsilon=epsilon,
-    )
+    with open(netname, 'r') as netfile:
+        netstring = netfile.read()
 
+    with open(specname, 'r') as specfile:
+        specstring = specfile.read()
 
-if __name__ == "__main__":
-    main()
+    nn = parse_net(netstring)
+    x0_low, x0_high = parse_spec(specstring)
+
+    # Classify the image
+    predicted_label = classify(nn, x0_low)
+
+    # Get noisy lower and upper bounds
+    lb_noisy, ub_noisy = get_perturbed_image(x0_low, epsilon)
+
+    if nn.numlayer != 4:
+        # Gurobi earlier stopping
+        start = time.time()
+        verified = gurobi_earlier_stopping(
+            nn, lb_noisy, ub_noisy, predicted_label)
+        end = time.time()
+    else:
+        # Gurobi 4 1024
+        start = time.time()
+        verified = gurobi_4_1024(nn, lb_noisy, ub_noisy, predicted_label)
+        end = time.time()
+
+    print(f'{"" if verified else "can not be "}verified')
+    print("analysis time: ", (end-start), " seconds")

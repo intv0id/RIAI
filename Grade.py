@@ -41,7 +41,7 @@ if __name__ == "__main__":
     dataset = pd.concat([readcsv(filename) for filename in filenames])
     score = 0
     for i, row in enumerate(dataset.to_dict(orient='records')):
-        incr = process(row, "analyzer_new.py")
+        incr = process(row, "analyzer.py")
         assert incr >= 0, f"{row} failed"
         score += incr
         print(f"{score}/{i+1}")
