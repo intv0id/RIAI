@@ -469,7 +469,7 @@ def gurobi_earlier_stopping(nn, input_lb, input_ub, label):
             # batch_s = time.clock()
             if i + 1 == nn.numlayer:
                 perm_lb, perm_ub, perm_lb_relu, perm_ub_relu = gurobi_optimize_last(
-                    m, tbo, is_relu, perm[label])
+                    m, tbo, is_relu, j_batch[label])
             else:
                 perm_lb, perm_ub, perm_lb_relu, perm_ub_relu = gurobi_optimize_bounds(
                     m, tbo, is_relu)
