@@ -19,13 +19,15 @@ def readcsv(filename):
     df[["status"]] = df[["status"]].applymap(lambda x: x.replace(" label", ""))
     df["net"], df["eps"] = d['net'], d['eps']
     df = df[df.status != "not considered"]
+    df = df[df.img != "analysisprecision"]
     return df
 
 
-def process(row):
+def process(row, executable):
     net, img, eps = f"../mnist_nets/{row['net']}.txt", f"../mnist_images/{row['img']}.txt", row['eps']
-    res = str(subprocess.check_output(f"python3 analyzer.py {net} {img} {eps}", shell=True, stderr=subprocess.STDOUT))
+    res = str(subprocess.check_output(f"python3 {executable} {net} {img} {eps}", shell=True, stderr=subprocess.STDOUT))
     if not re.search(f"can not be verified", res) and re.search(f"verified", res):
+        print(res)
         return 1 if row['status'] == "verified" else -1        
     elif re.search(f"can not be verified", res):
         return 1 if row['status'] == "failed" else 0
@@ -39,6 +41,8 @@ if __name__ == "__main__":
     dataset = pd.concat([readcsv(filename) for filename in filenames])
     score = 0
     for i, row in enumerate(dataset.to_dict(orient='records')):
-        score += process(row)
+        incr = process(row, "analyzer_new.py")
+        assert incr >= 0, f"{row} failed"
+        score += incr
         print(f"{score}/{i+1}")
 
